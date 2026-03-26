@@ -11,9 +11,10 @@ AI may draft:
 - copy
 - low-risk UI changes
 - analytics summaries
+- issue-to-PR implementation slices
 
 ## Must require manual review
-The following must not auto-merge:
+The following must not auto-merge and must remain draft-or-reviewed work:
 - authentication changes
 - billing changes
 - schema migrations
@@ -21,6 +22,7 @@ The following must not auto-merge:
 - privacy or legal copy
 - destructive data handling
 - outbound email logic changes
+- any change that expands secret access or automation privileges
 
 ## Merge rule
 Auto-merge is allowed only when all are true:
@@ -29,6 +31,21 @@ Auto-merge is allowed only when all are true:
 - scope is narrow
 - no protected area was touched
 - PR body includes required fields
+- branch protection remains intact
+
+## Issue-to-PR trigger rule
+Real Codex runs are intentionally gated to avoid accidental spend.
+
+A Codex issue-to-PR run may start only when one of these is true:
+- the issue has the `codex` label, or
+- a collaborator comments `/codex`, or
+- a collaborator comments `/retry`
+
+## Draft PR rule
+Codex-created PRs are created as draft PRs by default. This preserves a low-oversight workflow without allowing silent merge of high-consequence changes.
 
 ## Recovery rule
 If issue automation fails, recover existing work first. Check for recoverable remote branches before retrying automation.
+
+## Budget rule
+Keep the Codex model and effort configurable through repository variables so cost can be reduced without changing workflow files.
