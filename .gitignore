@@ -1,0 +1,14 @@
+# .gitignore
+node_modules/
+.next/
+out/
+dist/
+coverage/
+.env
+.env.local
+.env.*.local
+.vercel/
+*.log
+.DS_Store
+ops/local/
+# .gitignore EOF

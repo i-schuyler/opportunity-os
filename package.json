@@ -1,0 +1,11 @@
+{
+  "name": "opportunity-os",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Opportunity OS starter scaffold",
+  "scripts": {
+    "lint": "node scripts/node-lint-placeholder.js",
+    "test": "node scripts/node-test-placeholder.js",
+    "build": "node scripts/node-build-placeholder.js"
+  }
+}

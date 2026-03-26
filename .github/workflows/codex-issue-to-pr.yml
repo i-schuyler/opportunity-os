@@ -1,0 +1,25 @@
+name: codex-issue-to-pr
+
+on:
+  issues:
+    types:
+      - opened
+  issue_comment:
+    types:
+      - created
+
+jobs:
+  codex-placeholder:
+    if: >-
+      github.event_name == 'issues' ||
+      (github.event_name == 'issue_comment' && github.event.comment.body == '/retry')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Explain placeholder state
+        run: |
+          echo "This workflow is a safe placeholder."
+          echo "Replace it with the real Codex Issue -> PR automation after OPENAI_API_KEY is configured."
