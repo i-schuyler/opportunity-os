@@ -121,7 +121,9 @@ jobs:
       - name: Build runtime prompt file
         run: |
           PROMPT_FILE="$RUNNER_TEMP/issue_to_pr_prompt.md"
+          CODEX_HOME_DIR="$RUNNER_TEMP/codex-home"
           echo "CODEX_PROMPT_FILE=$PROMPT_FILE" >> "$GITHUB_ENV"
+          echo "CODEX_HOME_DIR=$CODEX_HOME_DIR" >> "$GITHUB_ENV"
           cat > "$PROMPT_FILE" <<'PROMPT'
           You are Codex acting as a GitHub issue-to-PR agent for Opportunity OS.
 
@@ -168,6 +170,14 @@ jobs:
           - Summarize exactly what changed and any remaining risks in the final message.
           PROMPT
 
+      - name: Guard runtime Codex artifacts
+        run: |
+          [ -f "$CODEX_PROMPT_FILE" ] || { echo "Missing runtime prompt file: $CODEX_PROMPT_FILE"; exit 1; }
+          [ -s "$CODEX_PROMPT_FILE" ] || { echo "Runtime prompt file is empty: $CODEX_PROMPT_FILE"; exit 1; }
+          mkdir -p "$CODEX_HOME_DIR"
+          echo "Runtime prompt path: $CODEX_PROMPT_FILE"
+          echo "Codex home path: $CODEX_HOME_DIR"
+
       - name: Run Codex
         id: run_codex
         uses: openai/codex-action@v1
@@ -179,7 +189,7 @@ jobs:
           model: ${{ env.CODEX_MODEL }}
           effort: ${{ env.CODEX_EFFORT }}
           allow-users: ${{ env.CODEX_ALLOWED_USERS }}
-          codex-home: ${{ runner.temp }}/codex-home
+          codex-home: ${{ env.CODEX_HOME_DIR }}
 
       - name: Detect changes
         id: detect_changes

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# scripts/create-example-issue.sh
 set -euo pipefail
 
 gh issue create   --title "feat: bootstrap web app shell"   --label feature   --label v0.1   --body $'Request
