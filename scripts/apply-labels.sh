@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# scripts/apply-labels.sh
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"

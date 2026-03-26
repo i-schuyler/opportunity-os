@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# scripts/diagnose-codex-issue.sh
 set -euo pipefail
 
 ISSUE_NUMBER=${1:?Usage: ./scripts/diagnose-codex-issue.sh <issue-number>}

@@ -1,4 +1,3 @@
-# scripts/cleanup-codex-runtime-artifacts.sh
 #!/usr/bin/env bash
 set -euo pipefail
 

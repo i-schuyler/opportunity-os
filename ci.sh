@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# ci.sh
 set -euo pipefail
 
 if ! command -v npm >/dev/null 2>&1; then

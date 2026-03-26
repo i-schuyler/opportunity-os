@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# scripts/apply-branch-protection.sh
 set -euo pipefail
 
 OWNER_REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
