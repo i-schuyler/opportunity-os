@@ -12,3 +12,5 @@ coverage/
 .DS_Store
 ops/local/
 # .gitignore EOF
+.github/codex/
+.github/prompts/_runtime_*.md

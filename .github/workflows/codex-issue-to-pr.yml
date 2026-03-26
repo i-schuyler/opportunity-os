@@ -120,8 +120,9 @@ jobs:
 
       - name: Build runtime prompt file
         run: |
-          mkdir -p .github/prompts
-          cat > .github/prompts/_runtime_issue_to_pr_prompt.md <<'PROMPT'
+          PROMPT_FILE="$RUNNER_TEMP/issue_to_pr_prompt.md"
+          echo "CODEX_PROMPT_FILE=$PROMPT_FILE" >> "$GITHUB_ENV"
+          cat > "$PROMPT_FILE" <<'PROMPT'
           You are Codex acting as a GitHub issue-to-PR agent for Opportunity OS.
 
           Goal:
@@ -172,13 +173,13 @@ jobs:
         uses: openai/codex-action@v1
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-          prompt-file: .github/prompts/_runtime_issue_to_pr_prompt.md
+          prompt-file: ${{ env.CODEX_PROMPT_FILE }}
           sandbox: workspace-write
           safety-strategy: drop-sudo
           model: ${{ env.CODEX_MODEL }}
           effort: ${{ env.CODEX_EFFORT }}
           allow-users: ${{ env.CODEX_ALLOWED_USERS }}
-          codex-home: ./.github/codex/home
+          codex-home: ${{ runner.temp }}/codex-home
 
       - name: Detect changes
         id: detect_changes
