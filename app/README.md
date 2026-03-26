@@ -1,4 +1,10 @@
 # app/README.md
 
-This directory is reserved for the web application.
-A future slice can replace this placeholder with the actual Next.js app.
+This directory now contains the initial static web app shell for Opportunity OS.
+
+## Files
+- `index.html`: baseline shell layout and placeholder sections
+- `styles.css`: shell styling
+- `main.js`: small client behavior for dynamic footer year
+
+This slice intentionally avoids billing, authentication, and schema/migration work.

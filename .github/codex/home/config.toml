@@ -1,0 +1,11 @@
+# Added by codex-action.
+model_provider = "codex-action-responses-proxy"
+
+
+
+
+# Added by codex-action.
+[model_providers.codex-action-responses-proxy]
+name = "Codex Action Responses Proxy"
+base_url = "http://127.0.0.1:43127/v1"
+wire_api = "responses"
