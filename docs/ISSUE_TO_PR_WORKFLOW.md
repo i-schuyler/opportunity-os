@@ -1,48 +1,24 @@
-# ISSUE_TO_PR_WORKFLOW.md
+# docs/ISSUE_TO_PR_WORKFLOW.md
 
-## Purpose
-This document defines the real Issue → Codex → Draft PR workflow for Opportunity OS.
+## Normal flow
+1. Create or label an issue with `codex`, or comment `/codex`.
+2. Workflow comments `Codex started…` on the issue.
+3. Codex attempts the smallest valid slice.
+4. If changes are produced, workflow pushes `codex/issue-<n>-<slug>` and opens a draft PR.
+5. Workflow comments `PR created: <link>` on the issue.
 
-## Trigger methods
-The workflow will run when any of the following happen on an open issue:
-- the issue is labeled `codex`
-- a collaborator comments `/codex`
-- a collaborator comments `/retry`
+## Recovery when nothing seems to happen
+1. Check Actions tab for `codex-issue-to-pr`.
+2. If the issue predated the workflow, comment `/retry` or `/codex`.
+3. If Actions shows failure, inspect the run link from the issue comment.
+4. Before retrying, check for a recoverable remote branch named `codex/issue-*`.
+5. If the problem is workflow/plumbing related, prefer a manual branch + PR fix over retry.
 
-This avoids spending API credits on every issue automatically.
+## Why comments matter
+The issue comments are the lowest-friction status surface:
+- `Codex started…`
+- `PR created: <link>`
+- failure/recovery comment with Actions run URL
 
-## What the workflow does
-1. Checks out the default branch.
-2. Builds a runtime prompt from the issue title/body plus repository docs.
-3. Runs `openai/codex-action@v1` with repository-scoped settings.
-4. If files changed, creates a branch.
-5. Commits the changes.
-6. Pushes the branch.
-7. Opens a draft PR linked to the issue.
-8. Comments back on the issue with the PR URL and Codex summary.
-
-## Default repo variables
-Set these as repository variables so you can tune behavior without editing the workflow:
-- `CODEX_ALLOWED_USERS` → GitHub usernames allowed to trigger Codex if they do not already have write access
-- `CODEX_MODEL` → default `gpt-5.3-codex`
-- `CODEX_EFFORT` → default `medium`
-- `CODEX_BRANCH_PREFIX` → default `codex`
-
-## Required secret
-Set this as a repository secret:
-- `OPENAI_API_KEY`
-
-## Expected branch pattern
-- `codex/issue-<number>-<slug>`
-
-## Safety posture
-- sandbox mode: `workspace-write`
-- safety strategy: `drop-sudo`
-- PRs open as draft by default
-- branch protection on `main` remains required
-
-## Recommended human behavior
-- Use `codex` label for a normal automation attempt.
-- Use `/retry` only after reading the previous failure comment or failed run.
-- Keep issues narrow and acceptance-based.
-- Keep auth, billing, migration, workflow, and legal changes under manual review.
+## PR review workflow
+Non-draft PRs receive a Codex summary comment for a second-pass review.

@@ -9,9 +9,15 @@ on:
   issue_comment:
     types:
       - created
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 'Issue number to re-run against'
+        required: false
+        type: string
 
 concurrency:
-  group: codex-issue-${{ github.event.issue.number }}
+  group: codex-issue-${{ github.event.issue.number || inputs.issue_number || github.run_id }}
   cancel-in-progress: false
 
 permissions:
@@ -22,39 +28,87 @@ permissions:
 jobs:
   codex-issue-to-pr:
     if: >-
-      github.event.issue.pull_request == null && (
-        contains(join(github.event.issue.labels.*.name, ','), 'codex') ||
-        (github.event_name == 'issue_comment' && (
-          startsWith(github.event.comment.body, '/codex') ||
-          startsWith(github.event.comment.body, '/retry')
-        ))
+      github.event_name == 'workflow_dispatch' || (
+        github.event.issue.pull_request == null && (
+          contains(join(github.event.issue.labels.*.name, ','), 'codex') ||
+          (github.event_name == 'issue_comment' && (
+            startsWith(github.event.comment.body, '/codex') ||
+            startsWith(github.event.comment.body, '/retry')
+          ))
+        )
       )
     runs-on: ubuntu-latest
-    env:
-      ISSUE_NUMBER: ${{ github.event.issue.number }}
-      ISSUE_TITLE: ${{ github.event.issue.title }}
-      ISSUE_BODY: ${{ github.event.issue.body }}
-      ISSUE_URL: ${{ github.event.issue.html_url }}
-      ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
-      REPO_NAME: ${{ github.repository }}
-      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-      CODEX_ALLOWED_USERS: ${{ vars.CODEX_ALLOWED_USERS }}
-      CODEX_MODEL: ${{ vars.CODEX_MODEL }}
-      CODEX_EFFORT: ${{ vars.CODEX_EFFORT }}
-      CODEX_BRANCH_PREFIX: ${{ vars.CODEX_BRANCH_PREFIX }}
     steps:
+      - name: Resolve issue context for workflow_dispatch
+        if: github.event_name == 'workflow_dispatch'
+        id: resolve_issue
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          result-encoding: string
+          script: |
+            const raw = core.getInput('issue_number');
+            const issueNumber = Number(raw || '0');
+            if (!issueNumber) core.setFailed('workflow_dispatch requires issue_number');
+            const { data: issue } = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issueNumber,
+            });
+            core.setOutput('issue_number', String(issue.number));
+            core.setOutput('issue_title', issue.title || '');
+            core.setOutput('issue_body', issue.body || '');
+            core.setOutput('issue_url', issue.html_url || '');
+            core.setOutput('issue_author', issue.user?.login || '');
+
+      - name: Export issue context
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "ISSUE_NUMBER=${{ steps.resolve_issue.outputs.issue_number }}" >> "$GITHUB_ENV"
+            printf 'ISSUE_TITLE=%s\n' '${{ steps.resolve_issue.outputs.issue_title }}' >> "$GITHUB_ENV"
+            {
+              echo 'ISSUE_BODY<<EOF'
+              printf '%s\n' '${{ steps.resolve_issue.outputs.issue_body }}'
+              echo 'EOF'
+            } >> "$GITHUB_ENV"
+            echo "ISSUE_URL=${{ steps.resolve_issue.outputs.issue_url }}" >> "$GITHUB_ENV"
+            echo "ISSUE_AUTHOR=${{ steps.resolve_issue.outputs.issue_author }}" >> "$GITHUB_ENV"
+          else
+            echo "ISSUE_NUMBER=${{ github.event.issue.number }}" >> "$GITHUB_ENV"
+            printf 'ISSUE_TITLE=%s\n' '${{ github.event.issue.title }}' >> "$GITHUB_ENV"
+            {
+              echo 'ISSUE_BODY<<EOF'
+              printf '%s\n' '${{ github.event.issue.body }}'
+              echo 'EOF'
+            } >> "$GITHUB_ENV"
+            echo "ISSUE_URL=${{ github.event.issue.html_url }}" >> "$GITHUB_ENV"
+            echo "ISSUE_AUTHOR=${{ github.event.issue.user.login }}" >> "$GITHUB_ENV"
+          fi
+          echo "REPO_NAME=${{ github.repository }}" >> "$GITHUB_ENV"
+          echo "DEFAULT_BRANCH=${{ github.event.repository.default_branch || github.event.repository.default_branch || 'main' }}" >> "$GITHUB_ENV"
+          echo "CODEX_ALLOWED_USERS=${{ vars.CODEX_ALLOWED_USERS || 'i-schuyler' }}" >> "$GITHUB_ENV"
+          echo "CODEX_MODEL=${{ vars.CODEX_MODEL || 'gpt-5.3-codex' }}" >> "$GITHUB_ENV"
+          echo "CODEX_EFFORT=${{ vars.CODEX_EFFORT || 'medium' }}" >> "$GITHUB_ENV"
+          echo "CODEX_BRANCH_PREFIX=${{ vars.CODEX_BRANCH_PREFIX || 'codex' }}" >> "$GITHUB_ENV"
+
       - name: Check out repository
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          ref: ${{ github.event.repository.default_branch || 'main' }}
           fetch-depth: 0
 
-      - name: Set defaults for unset variables
-        run: |
-          echo "CODEX_ALLOWED_USERS=${CODEX_ALLOWED_USERS:-i-schuyler}" >> "$GITHUB_ENV"
-          echo "CODEX_MODEL=${CODEX_MODEL:-gpt-5.3-codex}" >> "$GITHUB_ENV"
-          echo "CODEX_EFFORT=${CODEX_EFFORT:-medium}" >> "$GITHUB_ENV"
-          echo "CODEX_BRANCH_PREFIX=${CODEX_BRANCH_PREFIX:-codex}" >> "$GITHUB_ENV"
+      - name: Comment started on issue
+        if: github.event_name != 'workflow_dispatch'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              body: 'Codex started…',
+            });
 
       - name: Prepare npm dependencies when lockfile exists
         run: |
@@ -66,6 +120,7 @@ jobs:
 
       - name: Build runtime prompt file
         run: |
+          mkdir -p .github/prompts
           cat > .github/prompts/_runtime_issue_to_pr_prompt.md <<'PROMPT'
           You are Codex acting as a GitHub issue-to-PR agent for Opportunity OS.
 
@@ -135,7 +190,7 @@ jobs:
           fi
 
       - name: Comment when no changes were produced
-        if: steps.detect_changes.outputs.changed != 'true'
+        if: steps.detect_changes.outputs.changed != 'true' && github.event_name != 'workflow_dispatch'
         uses: actions/github-script@v7
         env:
           CODEX_FINAL_MESSAGE: ${{ steps.run_codex.outputs.final-message }}
@@ -150,7 +205,7 @@ jobs:
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.payload.issue.number,
+              issue_number: Number(process.env.ISSUE_NUMBER),
               body,
             });
 
@@ -200,6 +255,14 @@ jobs:
           ## Issue
           Closes #${ISSUE_NUMBER}
 
+          ## Scope
+          Narrow, reversible implementation slice.
+
+          ## Risk
+          RISK: low
+          BREAKING: no
+          NEEDS_HIL: no
+
           ## Codex final message
           ${CODEX_FINAL_MESSAGE}
           PRBODY
@@ -213,7 +276,7 @@ jobs:
           fi
 
       - name: Comment back on issue
-        if: steps.detect_changes.outputs.changed == 'true'
+        if: steps.detect_changes.outputs.changed == 'true' && github.event_name != 'workflow_dispatch'
         uses: actions/github-script@v7
         env:
           PR_URL: ${{ steps.create_pr.outputs.pr_url }}
@@ -223,7 +286,7 @@ jobs:
           github-token: ${{ github.token }}
           script: |
             const body = [
-              `Codex opened or updated a draft PR: ${process.env.PR_URL}`,
+              `PR created: ${process.env.PR_URL}`,
               '',
               `Branch: \`${process.env.BRANCH_NAME}\``,
               '',
@@ -233,6 +296,29 @@ jobs:
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.payload.issue.number,
+              issue_number: Number(process.env.ISSUE_NUMBER),
               body,
+            });
+
+      - name: Comment recovery details on failure
+        if: failure() && github.event_name != 'workflow_dispatch'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number(process.env.ISSUE_NUMBER),
+              body: [
+                `Codex workflow failed for issue #${process.env.ISSUE_NUMBER}.`,
+                '',
+                `Workflow run: ${runUrl}`,
+                '',
+                'Recovery:',
+                '- Check Actions for the failing step.',
+                '- Check whether a remote `codex/issue-*` branch was pushed.',
+                '- Use manual PR recovery before retrying if a branch exists.',
+              ].join('\n'),
             });
