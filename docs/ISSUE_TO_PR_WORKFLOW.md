@@ -18,7 +18,7 @@
 
 ## Validation quick-check
 - issue title changed after first Codex PR: duplicate check still matches `codex/issue-<issue-number>-*` and skips
-- unauthorized trigger comment: no Codex run
+- unauthorized or unrelated comment on a codex-labeled issue: no Codex run
 - authorized `/codex` or `/retry`: Codex run starts
 
 ## Recovery when nothing seems to happen

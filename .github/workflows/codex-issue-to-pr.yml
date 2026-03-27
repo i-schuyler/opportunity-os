@@ -29,12 +29,13 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' || (
         github.event.issue.pull_request == null && (
-          contains(join(github.event.issue.labels.*.name, ','), 'codex') ||
-          (github.event_name == 'issue_comment' && (
+          (github.event_name == 'issues' &&
+          contains(join(github.event.issue.labels.*.name, ','), 'codex')) ||
+          (github.event_name == 'issue_comment' &&
             (startsWith(github.event.comment.body, '/codex') ||
             startsWith(github.event.comment.body, '/retry')) &&
             contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
-          ))
+          )
         )
       )
     runs-on: ubuntu-latest
