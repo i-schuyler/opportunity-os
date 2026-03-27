@@ -14,3 +14,4 @@
 - [TENTATIVE] The first implementation stack will use Next.js, Supabase, Stripe, and Vercel.
 - [TENTATIVE] Initial AI features should be limited to drafting and weekly summaries.
 - [TENTATIVE] Until real auth is wired, the app shell may use a browser-session mock sign-in to keep slices reversible.
+- [TENTATIVE] Mock-auth scaffolding is explicitly enabled per URL via `?mockAuth=1` and remains fail-closed when absent.
