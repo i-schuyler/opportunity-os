@@ -11,33 +11,54 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div class="shell">
+    <div class="shell" id="top">
       <header class="shell__header">
         <p class="eyebrow">Opportunity OS</p>
-        <h1>Track opportunities and keep momentum.</h1>
+        <h1>Keep opportunity search clear, calm, and moving.</h1>
         <p>
-          A focused web app shell for opportunity seekers, with housing and barter as the lead examples.
+          Opportunity OS is for opportunity seekers generally. Housing and barter are the lead examples for the
+          first template pack, while the workflow stays useful across many opportunity types.
         </p>
+        <div class="hero__cta" aria-label="Primary page actions">
+          <a class="button button--solid" href="#pricing">View pricing</a>
+          <a class="button" href="#preview">See how it works</a>
+        </div>
       </header>
 
-      <main class="shell__main" aria-label="App shell preview">
-        <section class="panel">
-          <h2>Opportunities</h2>
-          <p>Placeholder list area for future CRUD slices.</p>
-        </section>
-
-        <section class="panel">
-          <h2>Templates</h2>
-          <p>Placeholder area for reusable response templates.</p>
-        </section>
-
-        <section class="panel panel--muted">
-          <h2>Next up</h2>
+      <main class="shell__main" aria-label="Opportunity OS landing content">
+        <section class="panel" id="preview">
+          <h2>What it helps with</h2>
+          <p>Track opportunities in one place, reduce overwhelm, and keep next steps visible.</p>
           <ul>
-            <li>Sign-in flow</li>
-            <li>Opportunity record editor</li>
-            <li>Weekly summary path</li>
+            <li>Capture opportunities with links, contacts, deadlines, and notes.</li>
+            <li>Reuse practical templates for outreach and follow-up.</li>
+            <li>Get clear weekly summaries so decisions stay simple.</li>
           </ul>
+        </section>
+
+        <section class="pricing" id="pricing" aria-label="Pricing">
+          <h2>Simple pricing</h2>
+          <p class="pricing__intro">Start free, upgrade monthly, or support the early launch with founder lifetime access.</p>
+          <div class="pricing__grid">
+            <article class="panel tier">
+              <h3>Free</h3>
+              <p class="tier__price">$0</p>
+              <p>Track opportunities and keep your process organized.</p>
+              <a class="button" href="#top">Explore free</a>
+            </article>
+            <article class="panel tier">
+              <h3>Monthly</h3>
+              <p class="tier__price">$9/month</p>
+              <p>Unlock premium paths as your opportunity workflow grows.</p>
+              <a class="button" href="#top">Choose monthly</a>
+            </article>
+            <article class="panel tier tier--founder">
+              <h3>Founder Lifetime</h3>
+              <p class="tier__price">$79 one-time</p>
+              <p><strong>First 50 founders.</strong> Early-supporter offer for people helping shape Opportunity OS at launch.</p>
+              <a class="button button--solid" href="#top">Claim founder spot</a>
+            </article>
+          </div>
         </section>
       </main>
 

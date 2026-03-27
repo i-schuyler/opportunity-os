@@ -35,8 +35,7 @@ body {
 
 .shell__main {
   display: grid;
-  gap: 1rem;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1.25rem;
   margin-top: 1.5rem;
 }
 
@@ -51,8 +50,73 @@ body {
   margin-top: 0;
 }
 
+.panel ul {
+  margin-bottom: 0;
+}
+
 .panel--muted {
   background: #f9fafb;
+}
+
+.hero__cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.button {
+  border: 1px solid #166534;
+  border-radius: 999px;
+  color: #14532d;
+  display: inline-block;
+  font-weight: 600;
+  padding: 0.5rem 0.9rem;
+  text-decoration: none;
+}
+
+.button:hover,
+.button:focus-visible {
+  background: #ecfdf3;
+}
+
+.button--solid {
+  background: #166534;
+  color: #f0fdf4;
+}
+
+.button--solid:hover,
+.button--solid:focus-visible {
+  background: #14532d;
+}
+
+.pricing h2 {
+  margin-bottom: 0.35rem;
+}
+
+.pricing__intro {
+  margin-top: 0;
+}
+
+.pricing__grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.tier h3 {
+  margin-top: 0;
+}
+
+.tier__price {
+  color: #14532d;
+  font-size: 1.3rem;
+  font-weight: 700;
+  margin: 0.25rem 0 0.75rem;
+}
+
+.tier--founder {
+  border-color: #166534;
 }
 
 .shell__footer {
