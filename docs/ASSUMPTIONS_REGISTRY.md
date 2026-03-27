@@ -14,3 +14,4 @@
 - [TENTATIVE] The first implementation stack will use Next.js, Supabase, Stripe, and Vercel.
 - [TENTATIVE] Initial AI features should be limited to drafting and weekly summaries.
 - [TENTATIVE] Until real auth is wired, the app shell may use a browser-session mock sign-in to keep slices reversible.
+- [TENTATIVE] If an issue-to-PR run receives unresolved placeholder metadata (for example `${ISSUE_TITLE}` and `${ISSUE_BODY}`), default to a docs-only clarification and avoid speculative product code changes until a concrete issue payload is provided.
