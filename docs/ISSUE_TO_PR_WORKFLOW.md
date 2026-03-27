@@ -14,11 +14,10 @@
 4. Before retrying, check for a recoverable remote branch named `codex/issue-*`.
 5. If the problem is workflow/plumbing related, prefer a manual branch + PR fix over retry.
 
-## Placeholder payload fallback
-If an issue-to-PR run receives unresolved placeholder metadata (for example `${ISSUE_TITLE}` or `${ISSUE_BODY}`), treat the run as ambiguous input:
-- do not implement speculative product code
-- prefer a minimal docs-only clarification
-- request or wait for a concrete issue payload, then rerun
+## Placeholder payload failure mode
+If an issue-to-PR run receives unresolved placeholder metadata (for example `${ISSUE_TITLE}` or `${ISSUE_BODY}`), treat it as workflow/input failure:
+- fail fast and stop before Codex execution
+- correct the issue payload source, then rerun with concrete issue metadata
 
 ## Why comments matter
 The issue comments are the lowest-friction status surface:
