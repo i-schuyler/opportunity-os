@@ -22,12 +22,58 @@
 
       <main class="shell__main">
         <section class="panel">
-          <h2>Opportunity list (placeholder)</h2>
-          <p>
-            This signed-in area is intentionally minimal. Future slices will replace placeholder data with real
-            storage and CRUD flows.
-          </p>
+          <h2>Create or edit opportunity</h2>
+          <form id="opportunity-form" class="opportunity-form stack-sm">
+            <input type="hidden" name="id" />
+            <label class="field">
+              <span>Title</span>
+              <input name="title" required />
+            </label>
+            <label class="field">
+              <span>Type</span>
+              <input name="type" placeholder="housing, barter, job, general..." />
+            </label>
+            <label class="field">
+              <span>Source link</span>
+              <input name="source_link" type="url" placeholder="https://example.com/opportunity" />
+            </label>
+            <label class="field">
+              <span>Contact</span>
+              <input name="contact" placeholder="name or email" />
+            </label>
+            <label class="field">
+              <span>Deadline</span>
+              <input name="deadline" type="date" />
+            </label>
+            <label class="field">
+              <span>Status</span>
+              <input name="status" placeholder="new, applied, interviewing..." />
+            </label>
+            <label class="field">
+              <span>Tags (comma-separated)</span>
+              <input name="tags" placeholder="housing, urgent" />
+            </label>
+            <label class="field">
+              <span>Notes</span>
+              <textarea name="notes" rows="4" placeholder="What matters about this opportunity?"></textarea>
+            </label>
+            <div class="opportunity-form__actions">
+              <button type="submit" class="button button--solid" id="save-opportunity-button">Save opportunity</button>
+              <button type="button" class="button" id="cancel-edit-button" hidden>Cancel edit</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="panel">
+          <div class="shell__header--row">
+            <h2>Active opportunities</h2>
+            <label class="toggle">
+              <input id="show-archived-toggle" type="checkbox" />
+              <span>Show archived</span>
+            </label>
+          </div>
           <div id="opportunity-list" class="stack-sm"></div>
+          <div id="archived-opportunity-list" class="stack-sm" hidden></div>
         </section>
       </main>
     </div>

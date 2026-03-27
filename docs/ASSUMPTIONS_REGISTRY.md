@@ -16,3 +16,4 @@
 - [TENTATIVE] Until real auth is wired, the app shell may use a browser-session mock sign-in to keep slices reversible.
 - [TENTATIVE] Mock-auth scaffolding is explicitly enabled per URL via `?mockAuth=1` and remains fail-closed when absent.
 - [TENTATIVE] If an issue-to-PR run receives unresolved placeholder metadata (for example `${ISSUE_TITLE}` and `${ISSUE_BODY}`), treat it as workflow/input failure, fail fast before Codex execution, and rerun only after concrete issue payload is available.
+- [TENTATIVE] Dashboard opportunity views default to active-only, with archived records hidden unless the user enables a `Show archived` toggle.
