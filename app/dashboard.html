@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dashboard | Opportunity OS</title>
+    <meta name="description" content="Opportunity OS signed-in dashboard placeholder." />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="shell" aria-label="Signed-in app shell">
+      <header class="shell__header shell__header--row">
+        <div>
+          <p class="eyebrow">Dashboard</p>
+          <h1>Your opportunities</h1>
+        </div>
+        <div class="stack-sm dashboard__actions">
+          <p class="meta" id="session-email"></p>
+          <button id="sign-out-button" class="button">Sign out</button>
+        </div>
+      </header>
+
+      <main class="shell__main">
+        <section class="panel">
+          <h2>Opportunity list (placeholder)</h2>
+          <p>
+            This signed-in area is intentionally minimal. Future slices will replace placeholder data with real
+            storage and CRUD flows.
+          </p>
+          <div id="opportunity-list" class="stack-sm"></div>
+        </section>
+      </main>
+    </div>
+    <script type="module" src="./dashboard.js"></script>
+  </body>
+</html>

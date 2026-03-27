@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sign In | Opportunity OS</title>
+    <meta name="description" content="Opportunity OS auth scaffold for signed-in app access." />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell shell--narrow" aria-label="Sign in scaffold">
+      <section class="panel">
+        <p class="eyebrow">Auth Scaffold</p>
+        <h1>Sign in to Opportunity OS</h1>
+        <p>
+          This is a dev-safe placeholder sign-in path. It stores a temporary session in browser storage so future
+          slices can replace it with real authentication.
+        </p>
+        <form id="auth-form" class="stack-sm">
+          <label for="email">Email</label>
+          <input id="email" name="email" type="email" required autocomplete="email" placeholder="you@example.com" />
+          <button class="button button--solid" type="submit">Continue to dashboard</button>
+        </form>
+        <p class="meta" id="auth-message" role="status" aria-live="polite"></p>
+        <p><a class="button" href="./index.html">Back to landing page</a></p>
+      </section>
+    </main>
+    <script type="module" src="./auth.js"></script>
+  </body>
+</html>
