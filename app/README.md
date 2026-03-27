@@ -13,4 +13,5 @@ This directory contains the static web app shell and signed-in scaffolding for O
 
 Notes:
 - Auth is scaffolded with a browser-session placeholder until real auth is wired.
+- Mock auth is fail-closed by default and only runs when `?mockAuth=1` is present in the auth/dashboard URL.
 - Billing and workflow files remain untouched.

@@ -13,6 +13,17 @@ body {
   margin: 0;
 }
 
+.mock-banner {
+  background: #fef3c7;
+  border-bottom: 1px solid #f59e0b;
+  color: #78350f;
+  font-size: 0.92rem;
+  font-weight: 700;
+  margin: 0;
+  padding: 0.65rem 1rem;
+  text-align: center;
+}
+
 input,
 button {
   font: inherit;
