@@ -62,34 +62,34 @@ jobs:
             core.setOutput('issue_author', issue.user?.login || '');
 
       - name: Export issue context
+        env:
+          ISSUE_NUMBER_VALUE: ${{ github.event_name == 'workflow_dispatch' && steps.resolve_issue.outputs.issue_number || github.event.issue.number }}
+          ISSUE_TITLE_VALUE: ${{ github.event_name == 'workflow_dispatch' && steps.resolve_issue.outputs.issue_title || github.event.issue.title }}
+          ISSUE_BODY_VALUE: ${{ github.event_name == 'workflow_dispatch' && steps.resolve_issue.outputs.issue_body || github.event.issue.body }}
+          ISSUE_URL_VALUE: ${{ github.event_name == 'workflow_dispatch' && steps.resolve_issue.outputs.issue_url || github.event.issue.html_url }}
+          ISSUE_AUTHOR_VALUE: ${{ github.event_name == 'workflow_dispatch' && steps.resolve_issue.outputs.issue_author || github.event.issue.user.login }}
+          REPO_NAME_VALUE: ${{ github.repository }}
+          DEFAULT_BRANCH_VALUE: ${{ github.event.repository.default_branch || 'main' }}
+          CODEX_ALLOWED_USERS_VALUE: ${{ vars.CODEX_ALLOWED_USERS || 'i-schuyler' }}
+          CODEX_MODEL_VALUE: ${{ vars.CODEX_MODEL || 'gpt-5.3-codex' }}
+          CODEX_EFFORT_VALUE: ${{ vars.CODEX_EFFORT || 'medium' }}
+          CODEX_BRANCH_PREFIX_VALUE: ${{ vars.CODEX_BRANCH_PREFIX || 'codex' }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "ISSUE_NUMBER=${{ steps.resolve_issue.outputs.issue_number }}" >> "$GITHUB_ENV"
-            printf 'ISSUE_TITLE=%s\n' '${{ steps.resolve_issue.outputs.issue_title }}' >> "$GITHUB_ENV"
-            {
-              echo 'ISSUE_BODY<<EOF'
-              printf '%s\n' '${{ steps.resolve_issue.outputs.issue_body }}'
-              echo 'EOF'
-            } >> "$GITHUB_ENV"
-            echo "ISSUE_URL=${{ steps.resolve_issue.outputs.issue_url }}" >> "$GITHUB_ENV"
-            echo "ISSUE_AUTHOR=${{ steps.resolve_issue.outputs.issue_author }}" >> "$GITHUB_ENV"
-          else
-            echo "ISSUE_NUMBER=${{ github.event.issue.number }}" >> "$GITHUB_ENV"
-            printf 'ISSUE_TITLE=%s\n' '${{ github.event.issue.title }}' >> "$GITHUB_ENV"
-            {
-              echo 'ISSUE_BODY<<EOF'
-              printf '%s\n' '${{ github.event.issue.body }}'
-              echo 'EOF'
-            } >> "$GITHUB_ENV"
-            echo "ISSUE_URL=${{ github.event.issue.html_url }}" >> "$GITHUB_ENV"
-            echo "ISSUE_AUTHOR=${{ github.event.issue.user.login }}" >> "$GITHUB_ENV"
-          fi
-          echo "REPO_NAME=${{ github.repository }}" >> "$GITHUB_ENV"
-          echo "DEFAULT_BRANCH=${{ github.event.repository.default_branch || github.event.repository.default_branch || 'main' }}" >> "$GITHUB_ENV"
-          echo "CODEX_ALLOWED_USERS=${{ vars.CODEX_ALLOWED_USERS || 'i-schuyler' }}" >> "$GITHUB_ENV"
-          echo "CODEX_MODEL=${{ vars.CODEX_MODEL || 'gpt-5.3-codex' }}" >> "$GITHUB_ENV"
-          echo "CODEX_EFFORT=${{ vars.CODEX_EFFORT || 'medium' }}" >> "$GITHUB_ENV"
-          echo "CODEX_BRANCH_PREFIX=${{ vars.CODEX_BRANCH_PREFIX || 'codex' }}" >> "$GITHUB_ENV"
+          {
+            printf 'ISSUE_NUMBER=%s\n' "$ISSUE_NUMBER_VALUE"
+            printf 'ISSUE_TITLE=%s\n' "$ISSUE_TITLE_VALUE"
+            echo 'ISSUE_BODY<<EOF'
+            printf '%s\n' "$ISSUE_BODY_VALUE"
+            echo 'EOF'
+            printf 'ISSUE_URL=%s\n' "$ISSUE_URL_VALUE"
+            printf 'ISSUE_AUTHOR=%s\n' "$ISSUE_AUTHOR_VALUE"
+            printf 'REPO_NAME=%s\n' "$REPO_NAME_VALUE"
+            printf 'DEFAULT_BRANCH=%s\n' "$DEFAULT_BRANCH_VALUE"
+            printf 'CODEX_ALLOWED_USERS=%s\n' "$CODEX_ALLOWED_USERS_VALUE"
+            printf 'CODEX_MODEL=%s\n' "$CODEX_MODEL_VALUE"
+            printf 'CODEX_EFFORT=%s\n' "$CODEX_EFFORT_VALUE"
+            printf 'CODEX_BRANCH_PREFIX=%s\n' "$CODEX_BRANCH_PREFIX_VALUE"
+          } >> "$GITHUB_ENV"
 
       - name: Check out repository
         uses: actions/checkout@v5
@@ -119,12 +119,22 @@ jobs:
           fi
 
       - name: Build runtime prompt file
+        env:
+          REPO_NAME: ${{ env.REPO_NAME }}
+          ISSUE_NUMBER: ${{ env.ISSUE_NUMBER }}
+          ISSUE_URL: ${{ env.ISSUE_URL }}
+          ISSUE_AUTHOR: ${{ env.ISSUE_AUTHOR }}
+          ISSUE_TITLE: ${{ env.ISSUE_TITLE }}
+          ISSUE_BODY: ${{ env.ISSUE_BODY }}
         run: |
           PROMPT_FILE="$RUNNER_TEMP/issue_to_pr_prompt.md"
           CODEX_HOME_DIR="$RUNNER_TEMP/codex-home"
-          echo "CODEX_PROMPT_FILE=$PROMPT_FILE" >> "$GITHUB_ENV"
-          echo "CODEX_HOME_DIR=$CODEX_HOME_DIR" >> "$GITHUB_ENV"
-          cat > "$PROMPT_FILE" <<PROMPT
+          {
+            printf 'CODEX_PROMPT_FILE=%s\n' "$PROMPT_FILE"
+            printf 'CODEX_HOME_DIR=%s\n' "$CODEX_HOME_DIR"
+          } >> "$GITHUB_ENV"
+          {
+            cat <<PROMPT
           You are Codex acting as a GitHub issue-to-PR agent for Opportunity OS.
 
           Goal:
@@ -169,6 +179,7 @@ jobs:
           - Run ./ci.sh if it is safe to do so.
           - Summarize exactly what changed and any remaining risks in the final message.
           PROMPT
+          } > "$PROMPT_FILE"
 
       - name: Guard runtime Codex artifacts
         run: |
@@ -179,7 +190,8 @@ jobs:
           echo "Codex home path: $CODEX_HOME_DIR"
           echo "Issue metadata debug: number=$ISSUE_NUMBER title_len=${#ISSUE_TITLE} body_len=${#ISSUE_BODY}"
           unresolved=0
-          for placeholder in '${ISSUE_TITLE}' '${ISSUE_BODY}' '${ISSUE_NUMBER}' '${ISSUE_URL}'; do
+          placeholders=("\${ISSUE_TITLE}" "\${ISSUE_BODY}" "\${ISSUE_NUMBER}" "\${ISSUE_URL}")
+          for placeholder in "${placeholders[@]}"; do
             if grep -Fq "$placeholder" "$CODEX_PROMPT_FILE"; then
               echo "Unresolved placeholder found in runtime prompt: $placeholder"
               unresolved=1
