@@ -38,8 +38,8 @@ Real Codex runs are intentionally gated to avoid accidental spend.
 
 A Codex issue-to-PR run may start only when one of these is true:
 - the issue is opened/reopened with the `codex` label already present, or
-- a collaborator comments `/codex`, or
-- a collaborator comments `/retry`
+- an authorized collaborator (`author_association` in `OWNER`, `MEMBER`, `COLLABORATOR`) comments `/codex`, or
+- an authorized collaborator (`author_association` in `OWNER`, `MEMBER`, `COLLABORATOR`) comments `/retry`
 
 Adding the `codex` label after issue creation does not auto-start a run; use `/codex` or `/retry`.
 
