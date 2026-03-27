@@ -15,3 +15,4 @@
 - [TENTATIVE] Initial AI features should be limited to drafting and weekly summaries.
 - [TENTATIVE] Until real auth is wired, the app shell may use a browser-session mock sign-in to keep slices reversible.
 - [TENTATIVE] If an issue-to-PR run receives unresolved placeholder metadata (for example `${ISSUE_TITLE}` and `${ISSUE_BODY}`), default to a docs-only clarification and avoid speculative product code changes until a concrete issue payload is provided.
+- [TENTATIVE] When placeholder issue metadata is detected, the safest reversible default is a docs-only update to workflow guidance plus a request for concrete issue content before product changes.
