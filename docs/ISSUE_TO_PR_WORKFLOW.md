@@ -13,6 +13,7 @@
 3. If Actions shows failure, inspect the run link from the issue comment.
 4. Before retrying, check for a recoverable remote branch named `codex/issue-*`.
 5. If the problem is workflow/plumbing related, prefer a manual branch + PR fix over retry.
+6. If automation reports a skipped duplicate run, use the existing PR/run rather than retriggering.
 
 ## Placeholder payload failure mode
 If an issue-to-PR run receives unresolved placeholder metadata (for example `${ISSUE_TITLE}` or `${ISSUE_BODY}`), treat it as workflow/input failure:

@@ -5,7 +5,6 @@ on:
     types:
       - opened
       - reopened
-      - labeled
   issue_comment:
     types:
       - created
@@ -18,7 +17,7 @@ on:
 
 concurrency:
   group: codex-issue-${{ github.event.issue.number || inputs.issue_number || github.run_id }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -97,8 +96,85 @@ jobs:
           ref: ${{ github.event.repository.default_branch || 'main' }}
           fetch-depth: 0
 
+      - name: Create branch name
+        id: branch_name
+        run: |
+          slug=$(printf '%s' "$ISSUE_TITLE" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/-\{2,\}/-/g' | sed 's/^-//' | sed 's/-$//' | cut -c1-36)
+          [ -n "$slug" ] || slug="issue"
+          echo "branch=${CODEX_BRANCH_PREFIX}/issue-${ISSUE_NUMBER}-${slug}" >> "$GITHUB_OUTPUT"
+
+      - name: Detect duplicate Codex work
+        id: duplicate_check
+        uses: actions/github-script@v7
+        env:
+          BRANCH_NAME: ${{ steps.branch_name.outputs.branch }}
+          ISSUE_TITLE: ${{ env.ISSUE_TITLE }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const branch = process.env.BRANCH_NAME;
+            const issueTitle = process.env.ISSUE_TITLE || '';
+            const head = `${owner}:${branch}`;
+
+            const { data: openPrs } = await github.rest.pulls.list({
+              owner,
+              repo,
+              state: 'open',
+              head,
+              per_page: 1,
+            });
+            if (openPrs.length > 0) {
+              core.setOutput('skip', 'true');
+              core.setOutput('reason', `Skipping duplicate run: open PR already exists for ${branch} (${openPrs[0].html_url}).`);
+              return;
+            }
+
+            const [inProgressRuns, queuedRuns] = await Promise.all([
+              github.rest.actions.listWorkflowRuns({
+                owner,
+                repo,
+                workflow_id: 'codex-issue-to-pr.yml',
+                status: 'in_progress',
+                per_page: 20,
+              }),
+              github.rest.actions.listWorkflowRuns({
+                owner,
+                repo,
+                workflow_id: 'codex-issue-to-pr.yml',
+                status: 'queued',
+                per_page: 20,
+              }),
+            ]);
+
+            const duplicateRun = [...inProgressRuns.data.workflow_runs, ...queuedRuns.data.workflow_runs]
+              .find((run) => run.id !== context.runId && run.display_title === issueTitle);
+            if (duplicateRun) {
+              core.setOutput('skip', 'true');
+              core.setOutput('reason', `Skipping duplicate run: another Codex run is already active for this issue (${duplicateRun.html_url}).`);
+              return;
+            }
+
+            core.setOutput('skip', 'false');
+
+      - name: Comment skipped duplicate run
+        if: steps.duplicate_check.outputs.skip == 'true' && github.event_name != 'workflow_dispatch'
+        uses: actions/github-script@v7
+        env:
+          DUPLICATE_REASON: ${{ steps.duplicate_check.outputs.reason }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number(process.env.ISSUE_NUMBER),
+              body: process.env.DUPLICATE_REASON || 'Skipping duplicate Codex run for this issue.',
+            });
+
       - name: Comment started on issue
-        if: github.event_name != 'workflow_dispatch'
+        if: github.event_name != 'workflow_dispatch' && steps.duplicate_check.outputs.skip != 'true'
         uses: actions/github-script@v7
         with:
           github-token: ${{ github.token }}
@@ -111,6 +187,7 @@ jobs:
             });
 
       - name: Prepare npm dependencies when lockfile exists
+        if: steps.duplicate_check.outputs.skip != 'true'
         run: |
           if [ -f package-lock.json ]; then
             npm ci
@@ -119,6 +196,7 @@ jobs:
           fi
 
       - name: Build runtime prompt file
+        if: steps.duplicate_check.outputs.skip != 'true'
         env:
           REPO_NAME: ${{ env.REPO_NAME }}
           ISSUE_NUMBER: ${{ env.ISSUE_NUMBER }}
@@ -182,6 +260,7 @@ jobs:
           } > "$PROMPT_FILE"
 
       - name: Guard runtime Codex artifacts
+        if: steps.duplicate_check.outputs.skip != 'true'
         run: |
           [ -f "$CODEX_PROMPT_FILE" ] || { echo "Missing runtime prompt file: $CODEX_PROMPT_FILE"; exit 1; }
           [ -s "$CODEX_PROMPT_FILE" ] || { echo "Runtime prompt file is empty: $CODEX_PROMPT_FILE"; exit 1; }
@@ -200,6 +279,7 @@ jobs:
           [ "$unresolved" -eq 0 ] || exit 1
 
       - name: Run Codex
+        if: steps.duplicate_check.outputs.skip != 'true'
         id: run_codex
         uses: openai/codex-action@v1
         with:
@@ -213,6 +293,7 @@ jobs:
           codex-home: ${{ env.CODEX_HOME_DIR }}
 
       - name: Detect changes
+        if: steps.duplicate_check.outputs.skip != 'true'
         id: detect_changes
         run: |
           if git diff --quiet; then
@@ -222,7 +303,7 @@ jobs:
           fi
 
       - name: Comment when no changes were produced
-        if: steps.detect_changes.outputs.changed != 'true' && github.event_name != 'workflow_dispatch'
+        if: steps.duplicate_check.outputs.skip != 'true' && steps.detect_changes.outputs.changed != 'true' && github.event_name != 'workflow_dispatch'
         uses: actions/github-script@v7
         env:
           CODEX_FINAL_MESSAGE: ${{ steps.run_codex.outputs.final-message }}
@@ -240,14 +321,6 @@ jobs:
               issue_number: Number(process.env.ISSUE_NUMBER),
               body,
             });
-
-      - name: Create branch name
-        if: steps.detect_changes.outputs.changed == 'true'
-        id: branch_name
-        run: |
-          slug=$(printf '%s' "$ISSUE_TITLE" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/-\{2,\}/-/g' | sed 's/^-//' | sed 's/-$//' | cut -c1-36)
-          [ -n "$slug" ] || slug="issue"
-          echo "branch=${CODEX_BRANCH_PREFIX}/issue-${ISSUE_NUMBER}-${slug}" >> "$GITHUB_OUTPUT"
 
       - name: Commit changes
         if: steps.detect_changes.outputs.changed == 'true'
