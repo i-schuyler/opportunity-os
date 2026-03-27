@@ -13,3 +13,4 @@
 - [LOCKED] Founder lifetime should be capped to the first 50 customers.
 - [TENTATIVE] The first implementation stack will use Next.js, Supabase, Stripe, and Vercel.
 - [TENTATIVE] Initial AI features should be limited to drafting and weekly summaries.
+- [TENTATIVE] Until real auth is wired, the app shell may use a browser-session mock sign-in to keep slices reversible.

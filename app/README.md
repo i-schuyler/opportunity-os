@@ -1,10 +1,16 @@
 # app/README.md
 
-This directory now contains the initial static web app shell for Opportunity OS.
+This directory contains the static web app shell and signed-in scaffolding for Opportunity OS.
 
 ## Files
-- `index.html`: baseline shell layout and placeholder sections
-- `styles.css`: shell styling
-- `main.js`: small client behavior for dynamic footer year
+- `index.html`: landing shell and CTA links
+- `auth.html`: mock/dev-safe auth entry page
+- `dashboard.html`: signed-in dashboard placeholder
+- `auth.js`: auth page behavior for mock session sign-in
+- `dashboard.js`: dashboard guard, placeholder render, sign-out
+- `styles.css`: shared shell styling
+- `main.js`: landing-page footer year behavior
 
-This slice intentionally avoids billing, authentication, and schema/migration work.
+Notes:
+- Auth is scaffolded with a browser-session placeholder until real auth is wired.
+- Billing and workflow files remain untouched.

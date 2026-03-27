@@ -13,6 +13,11 @@ body {
   margin: 0;
 }
 
+input,
+button {
+  font: inherit;
+}
+
 .shell {
   margin: 0 auto;
   max-width: 960px;
@@ -20,8 +25,20 @@ body {
   padding: 2rem 1rem;
 }
 
+.shell--narrow {
+  max-width: 680px;
+}
+
 .shell__header h1 {
   margin: 0.25rem 0 0.75rem;
+}
+
+.shell__header--row {
+  align-items: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: space-between;
 }
 
 .eyebrow {
@@ -58,6 +75,10 @@ body {
   background: #f9fafb;
 }
 
+.stack-sm > * + * {
+  margin-top: 0.6rem;
+}
+
 .hero__cta {
   display: flex;
   flex-wrap: wrap;
@@ -88,6 +109,35 @@ body {
 .button--solid:hover,
 .button--solid:focus-visible {
   background: #14532d;
+}
+
+input[type='email'] {
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  display: block;
+  padding: 0.5rem 0.65rem;
+  width: 100%;
+}
+
+.meta {
+  color: #4b5563;
+  font-size: 0.92rem;
+  margin: 0;
+}
+
+.dashboard__actions {
+  align-items: flex-end;
+}
+
+.code-block {
+  background: #111827;
+  border-radius: 10px;
+  color: #f8fafc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.84rem;
+  margin: 0;
+  overflow-x: auto;
+  padding: 0.9rem;
 }
 
 .pricing h2 {
