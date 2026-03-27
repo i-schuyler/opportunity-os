@@ -37,9 +37,11 @@ Auto-merge is allowed only when all are true:
 Real Codex runs are intentionally gated to avoid accidental spend.
 
 A Codex issue-to-PR run may start only when one of these is true:
-- the issue has the `codex` label, or
+- the issue is opened/reopened with the `codex` label already present, or
 - a collaborator comments `/codex`, or
 - a collaborator comments `/retry`
+
+Adding the `codex` label after issue creation does not auto-start a run; use `/codex` or `/retry`.
 
 ## Draft PR rule
 Codex-created PRs are created as draft PRs by default. This preserves a low-oversight workflow without allowing silent merge of high-consequence changes.

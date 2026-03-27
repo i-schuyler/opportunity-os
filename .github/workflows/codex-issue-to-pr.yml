@@ -108,14 +108,12 @@ jobs:
         uses: actions/github-script@v7
         env:
           BRANCH_NAME: ${{ steps.branch_name.outputs.branch }}
-          ISSUE_TITLE: ${{ env.ISSUE_TITLE }}
         with:
           github-token: ${{ github.token }}
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const branch = process.env.BRANCH_NAME;
-            const issueTitle = process.env.ISSUE_TITLE || '';
             const head = `${owner}:${branch}`;
 
             const { data: openPrs } = await github.rest.pulls.list({
@@ -128,31 +126,6 @@ jobs:
             if (openPrs.length > 0) {
               core.setOutput('skip', 'true');
               core.setOutput('reason', `Skipping duplicate run: open PR already exists for ${branch} (${openPrs[0].html_url}).`);
-              return;
-            }
-
-            const [inProgressRuns, queuedRuns] = await Promise.all([
-              github.rest.actions.listWorkflowRuns({
-                owner,
-                repo,
-                workflow_id: 'codex-issue-to-pr.yml',
-                status: 'in_progress',
-                per_page: 20,
-              }),
-              github.rest.actions.listWorkflowRuns({
-                owner,
-                repo,
-                workflow_id: 'codex-issue-to-pr.yml',
-                status: 'queued',
-                per_page: 20,
-              }),
-            ]);
-
-            const duplicateRun = [...inProgressRuns.data.workflow_runs, ...queuedRuns.data.workflow_runs]
-              .find((run) => run.id !== context.runId && run.display_title === issueTitle);
-            if (duplicateRun) {
-              core.setOutput('skip', 'true');
-              core.setOutput('reason', `Skipping duplicate run: another Codex run is already active for this issue (${duplicateRun.html_url}).`);
               return;
             }
 

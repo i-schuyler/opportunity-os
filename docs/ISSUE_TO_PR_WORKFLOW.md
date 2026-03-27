@@ -1,11 +1,19 @@
 # docs/ISSUE_TO_PR_WORKFLOW.md
 
 ## Normal flow
-1. Create or label an issue with `codex`, or comment `/codex`.
+1. Open (or reopen) an issue that already has the `codex` label, or comment `/codex`.
 2. Workflow comments `Codex started…` on the issue.
 3. Codex attempts the smallest valid slice.
 4. If changes are produced, workflow pushes `codex/issue-<n>-<slug>` and opens a draft PR.
 5. Workflow comments `PR created: <link>` on the issue.
+
+## Trigger quick-check
+- opened/reopened with `codex` label already present: run starts
+- opened/reopened without `codex` label: no run
+- adding `codex` label later: no auto-run; use `/codex` or `/retry`
+- `/codex` comment: run starts
+- `/retry` comment: run starts
+- duplicate trigger while PR already open for `codex/issue-*`: run posts skip note and exits before Codex work
 
 ## Recovery when nothing seems to happen
 1. Check Actions tab for `codex-issue-to-pr`.
