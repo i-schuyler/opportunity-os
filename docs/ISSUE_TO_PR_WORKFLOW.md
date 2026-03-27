@@ -8,12 +8,14 @@
 5. Workflow comments `PR created: <link>` on the issue.
 
 ## Trigger quick-check
-- opened/reopened with `codex` label already present: run starts
+- opened/reopened with exact `codex` label: run starts
 - opened/reopened without `codex` label: no run
+- near-match labels like `codex-test`: no run
 - adding `codex` label later: no auto-run; use `/codex` or `/retry`
 - unauthorized `/codex` or `/retry` comment: no run
-- authorized `/codex` comment: run starts
-- authorized `/retry` comment: run starts
+- authorized exact `/codex` comment: run starts
+- authorized exact `/retry` comment: run starts
+- near-match commands like `/codex123` or `/retry-now`: no run
 - duplicate trigger while PR already open for `codex/issue-<issue-number>-*`: run posts skip note and exits before Codex work
 
 ## Validation quick-check
