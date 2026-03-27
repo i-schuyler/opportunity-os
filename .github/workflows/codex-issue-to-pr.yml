@@ -124,7 +124,7 @@ jobs:
           CODEX_HOME_DIR="$RUNNER_TEMP/codex-home"
           echo "CODEX_PROMPT_FILE=$PROMPT_FILE" >> "$GITHUB_ENV"
           echo "CODEX_HOME_DIR=$CODEX_HOME_DIR" >> "$GITHUB_ENV"
-          cat > "$PROMPT_FILE" <<'PROMPT'
+          cat > "$PROMPT_FILE" <<PROMPT
           You are Codex acting as a GitHub issue-to-PR agent for Opportunity OS.
 
           Goal:
@@ -177,6 +177,15 @@ jobs:
           mkdir -p "$CODEX_HOME_DIR"
           echo "Runtime prompt path: $CODEX_PROMPT_FILE"
           echo "Codex home path: $CODEX_HOME_DIR"
+          echo "Issue metadata debug: number=$ISSUE_NUMBER title_len=${#ISSUE_TITLE} body_len=${#ISSUE_BODY}"
+          unresolved=0
+          for placeholder in '${ISSUE_TITLE}' '${ISSUE_BODY}' '${ISSUE_NUMBER}' '${ISSUE_URL}'; do
+            if grep -Fq "$placeholder" "$CODEX_PROMPT_FILE"; then
+              echo "Unresolved placeholder found in runtime prompt: $placeholder"
+              unresolved=1
+            fi
+          done
+          [ "$unresolved" -eq 0 ] || exit 1
 
       - name: Run Codex
         id: run_codex
