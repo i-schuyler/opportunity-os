@@ -58,7 +58,7 @@ function loadDashboardInitialize(mocks) {
   const filePath = path.join(__dirname, '..', 'app', 'dashboard.js');
   let source = fs.readFileSync(filePath, 'utf8');
 
-  source = source.replace(/^import .*;\n/gm, '');
+  source = source.replace(/^import[\s\S]*?;\n/gm, '');
   source = source.replace('export function initializeDashboard', 'function initializeDashboard');
   source = source.replace(
     /\nif \(typeof window !== 'undefined' && typeof document !== 'undefined'\) \{\n  initializeDashboard\(window, document\);\n\}\n?$/,
@@ -77,6 +77,27 @@ function loadDashboardInitialize(mocks) {
   vm.createContext(context);
   new vm.Script(source, { filename: filePath }).runInContext(context);
   return context.module.exports.initializeDashboard;
+}
+
+function loadOpportunityModel() {
+  const filePath = path.join(__dirname, '..', 'lib', 'opportunity-model.js');
+  let source = fs.readFileSync(filePath, 'utf8');
+
+  source = source.replace(/export function\s+/g, 'function ');
+  source +=
+    '\nmodule.exports = { createOpportunity, listOpportunitiesForUser, createOpportunityForUser, updateOpportunityForUser, archiveOpportunityForUser, deleteOpportunityForUser };\n';
+
+  const context = {
+    module: { exports: {} },
+    exports: {},
+    Date,
+    JSON,
+    globalThis: {},
+  };
+
+  vm.createContext(context);
+  new vm.Script(source, { filename: filePath }).runInContext(context);
+  return context.module.exports;
 }
 
 (function testGetMockSessionValid() {
@@ -179,6 +200,57 @@ function loadDashboardInitialize(mocks) {
 
   assert.strictEqual(redirectedTo, './auth.html?mockAuth=1');
   assert.strictEqual(getElementByIdCalls, 0);
+})();
+
+(function testOpportunityModelCrud() {
+  const model = loadOpportunityModel();
+  const storage = makeSessionStorage();
+  const userId = 'dev-user';
+
+  const first = model.createOpportunityForUser(
+    userId,
+    {
+      title: 'Find apartment lead',
+      type: 'housing',
+      contact: 'owner@example.com',
+      deadline: '2026-04-01',
+      status: 'new',
+      notes: 'Call after 5pm',
+      tags: ['housing', 'urgent'],
+    },
+    { storage }
+  );
+
+  assert.ok(first.id, 'expected created opportunity to have id');
+
+  const second = model.createOpportunityForUser(
+    'dev-other',
+    { title: 'Other user record' },
+    { storage }
+  );
+
+  const activeForUser = model.listOpportunitiesForUser(userId, { storage });
+  assert.strictEqual(activeForUser.length, 1);
+  assert.strictEqual(activeForUser[0].title, 'Find apartment lead');
+  assert.notStrictEqual(activeForUser[0].id, second.id);
+
+  const updated = model.updateOpportunityForUser(
+    userId,
+    first.id,
+    { status: 'applied', notes: 'Sent application' },
+    { storage }
+  );
+
+  assert.strictEqual(updated.status, 'applied');
+  assert.strictEqual(updated.notes, 'Sent application');
+
+  model.archiveOpportunityForUser(userId, first.id, { storage });
+  assert.strictEqual(model.listOpportunitiesForUser(userId, { storage }).length, 0);
+  assert.strictEqual(model.listOpportunitiesForUser(userId, { includeArchived: true, storage }).length, 1);
+
+  const deleted = model.deleteOpportunityForUser(userId, first.id, { storage });
+  assert.strictEqual(deleted, true);
+  assert.strictEqual(model.listOpportunitiesForUser(userId, { includeArchived: true, storage }).length, 0);
 })();
 
 console.log('test placeholder: pass');

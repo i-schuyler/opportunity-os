@@ -5,9 +5,9 @@ This directory contains the static web app shell and signed-in scaffolding for O
 ## Files
 - `index.html`: landing shell and CTA links
 - `auth.html`: mock/dev-safe auth entry page
-- `dashboard.html`: signed-in dashboard placeholder
+- `dashboard.html`: signed-in dashboard with mock-backed opportunity CRUD
 - `auth.js`: auth page behavior for mock session sign-in
-- `dashboard.js`: dashboard guard, placeholder render, sign-out
+- `dashboard.js`: dashboard guard, local CRUD render/actions, sign-out
 - `styles.css`: shared shell styling
 - `main.js`: landing-page footer year behavior
 
