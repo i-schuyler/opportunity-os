@@ -333,7 +333,7 @@ function findFirstNode(root, predicate) {
   return null;
 }
 
-function testOpportunityItem(source_link) {
+function testOpportunityItem(source_link, overrides = {}) {
   return {
     id: 'opp-1',
     title: 'Test opportunity',
@@ -345,6 +345,7 @@ function testOpportunityItem(source_link) {
     tags: [],
     notes: 'note',
     archived: false,
+    ...overrides,
   };
 }
 
@@ -435,8 +436,8 @@ function clickCardAction(listNode, cardId, action, statusValue = '') {
 (function testDashboardSourceLinkHttpsIsClickable() {
   const { buildCard } = loadDashboardModule({});
   const doc = new FakeDocument();
-  const card = buildCard(testOpportunityItem('  https://example.com/path  '), doc);
-  const link = findFirstNode(card, (node) => node.tagName === 'a');
+  const card = buildCard(testOpportunityItem('  https://example.com/path  ', { contact: '' }), doc);
+  const link = findFirstNode(card, (node) => node.tagName === 'a' && node.href.startsWith('https://'));
 
   assert.ok(link, 'expected https source link to render as clickable anchor');
   assert.strictEqual(link.href, 'https://example.com/path');
@@ -445,8 +446,8 @@ function clickCardAction(listNode, cardId, action, statusValue = '') {
 (function testDashboardSourceLinkHttpIsClickable() {
   const { buildCard } = loadDashboardModule({});
   const doc = new FakeDocument();
-  const card = buildCard(testOpportunityItem('http://example.com/path'), doc);
-  const link = findFirstNode(card, (node) => node.tagName === 'a');
+  const card = buildCard(testOpportunityItem('http://example.com/path', { contact: '' }), doc);
+  const link = findFirstNode(card, (node) => node.tagName === 'a' && node.href.startsWith('http://'));
 
   assert.ok(link, 'expected http source link to render as clickable anchor');
   assert.strictEqual(link.href, 'http://example.com/path');
@@ -455,7 +456,7 @@ function clickCardAction(listNode, cardId, action, statusValue = '') {
 (function testDashboardSourceLinkJavascriptIsNotClickable() {
   const { buildCard } = loadDashboardModule({});
   const doc = new FakeDocument();
-  const card = buildCard(testOpportunityItem('javascript:alert(1)'), doc);
+  const card = buildCard(testOpportunityItem('javascript:alert(1)', { contact: '' }), doc);
   const link = findFirstNode(card, (node) => node.tagName === 'a');
   const sourceText = findFirstNode(card, (node) => node.tagName === 'p' && node.textContent.includes('Source:'));
 
@@ -466,12 +467,45 @@ function clickCardAction(listNode, cardId, action, statusValue = '') {
 (function testDashboardSourceLinkMalformedIsNotClickable() {
   const { buildCard } = loadDashboardModule({});
   const doc = new FakeDocument();
-  const card = buildCard(testOpportunityItem('not-a-valid-url'), doc);
+  const card = buildCard(testOpportunityItem('not-a-valid-url', { contact: '' }), doc);
   const link = findFirstNode(card, (node) => node.tagName === 'a');
   const sourceText = findFirstNode(card, (node) => node.tagName === 'p' && node.textContent.includes('Source:'));
 
   assert.strictEqual(link, null, 'expected malformed source link to be blocked');
   assert.ok(sourceText, 'expected malformed source link to render as non-clickable source text');
+})();
+
+(function testDashboardContactEmailRendersMailAction() {
+  const { buildCard } = loadDashboardModule({});
+  const doc = new FakeDocument();
+  const card = buildCard(testOpportunityItem('', { contact: ' person@example.com ' }), doc);
+  const link = findFirstNode(card, (node) => node.tagName === 'a');
+
+  assert.ok(link, 'expected email contact to render as a clickable action');
+  assert.strictEqual(link.href, 'mailto:person%40example.com');
+  assert.strictEqual(link.textContent, 'Email');
+})();
+
+(function testDashboardContactPhoneRendersTelAction() {
+  const { buildCard } = loadDashboardModule({});
+  const doc = new FakeDocument();
+  const card = buildCard(testOpportunityItem('', { contact: '(555) 123-4567' }), doc);
+  const link = findFirstNode(card, (node) => node.tagName === 'a');
+
+  assert.ok(link, 'expected phone-like contact to render as a clickable action');
+  assert.strictEqual(link.href, 'tel:5551234567');
+  assert.strictEqual(link.textContent, 'Call');
+})();
+
+(function testDashboardContactMalformedStaysNonClickable() {
+  const { buildCard } = loadDashboardModule({});
+  const doc = new FakeDocument();
+  const card = buildCard(testOpportunityItem('', { contact: '555-abc-1212' }), doc);
+  const link = findFirstNode(card, (node) => node.tagName === 'a');
+  const contactText = findFirstNode(card, (node) => node.tagName === 'p' && node.textContent.includes('Contact:'));
+
+  assert.strictEqual(link, null, 'expected malformed contact to stay non-clickable');
+  assert.ok(contactText, 'expected malformed contact to render as plain contact text');
 })();
 
 (function testDashboardBuildCardShowsUrgencyBadge() {
@@ -917,6 +951,7 @@ function clickCardAction(listNode, cardId, action, statusValue = '') {
     {
       title: 'Quick status target',
       status: 'new',
+      contact: 'person@example.com',
     },
     { storage }
   );
