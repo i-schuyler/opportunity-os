@@ -19,3 +19,4 @@
 - [TENTATIVE] Dashboard opportunity views default to active-only, with archived records hidden unless the user switches to archived view filters.
 - [TENTATIVE] Dashboard status filter options are derived from statuses present in the current user's stored opportunities, with an `All statuses` fallback.
 - [TENTATIVE] Dashboard nearest-deadline sorting treats missing/invalid deadlines conservatively by placing them last.
+- [TENTATIVE] Dashboard quick-status actions use the literal status values `new`, `in progress`, `waiting`, and `done` for direct in-list updates.

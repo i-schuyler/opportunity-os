@@ -16,6 +16,7 @@ const DASHBOARD_SORT_MODES = new Set([
   SORT_MODE_RECENTLY_UPDATED,
   SORT_MODE_TITLE_AZ,
 ]);
+const QUICK_STATUS_VALUES = ['new', 'in progress', 'waiting', 'done'];
 const DEFAULT_DASHBOARD_FILTERS = {
   view: 'active',
   status: 'all',
@@ -51,6 +52,10 @@ function truncate(text, maxLength = 120) {
     return normalized;
   }
   return `${normalized.slice(0, maxLength - 1)}…`;
+}
+
+function normalizeStatusValue(value) {
+  return String(value || '').trim().toLowerCase();
 }
 
 function formatDate(value) {
@@ -301,6 +306,23 @@ function buildCard(item, doc) {
   const actions = doc.createElement('div');
   actions.className = 'opportunity-card__actions';
 
+  const quickStatusActions = doc.createElement('div');
+  quickStatusActions.className = 'opportunity-card__quick-status';
+  const currentStatus = normalizeStatusValue(item.status);
+
+  QUICK_STATUS_VALUES.forEach((statusValue) => {
+    const quickStatusButton = doc.createElement('button');
+    quickStatusButton.type = 'button';
+    quickStatusButton.className = 'button button--subtle';
+    quickStatusButton.dataset.action = 'quick_status';
+    quickStatusButton.dataset.status = statusValue;
+    quickStatusButton.textContent = statusValue;
+    if (currentStatus === statusValue) {
+      quickStatusButton.disabled = true;
+    }
+    quickStatusActions.append(quickStatusButton);
+  });
+
   const editButton = doc.createElement('button');
   editButton.type = 'button';
   editButton.className = 'button';
@@ -320,7 +342,7 @@ function buildCard(item, doc) {
   deleteButton.dataset.action = 'delete';
   deleteButton.textContent = 'Delete';
 
-  actions.append(editButton, archiveButton, deleteButton);
+  actions.append(quickStatusActions, editButton, archiveButton, deleteButton);
   card.append(header, meta, notes, tags, actions);
   return card;
 }
@@ -511,6 +533,19 @@ export function initializeDashboard(win = window, doc = document) {
         archiveOpportunityForUser(session.userId, id);
         if (form && form.elements.id.value === id) {
           resetForm(form, cancelEditButton, saveButton);
+        }
+        renderList();
+        return;
+      }
+
+      if (action === 'quick_status') {
+        const nextStatus = String(actionNode.dataset.status || '').trim();
+        if (!nextStatus) {
+          return;
+        }
+        updateOpportunityForUser(session.userId, id, { status: nextStatus });
+        if (form && form.elements.id.value === id && form.elements.status) {
+          form.elements.status.value = nextStatus;
         }
         renderList();
         return;
