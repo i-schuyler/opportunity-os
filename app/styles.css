@@ -94,6 +94,19 @@ textarea {
   background: #f9fafb;
 }
 
+.empty-state {
+  margin: 0;
+}
+
+.empty-state__title {
+  margin: 0 0 0.35rem;
+}
+
+.empty-state__tips {
+  margin: 0.65rem 0 0.85rem 1.1rem;
+  padding: 0;
+}
+
 .stack-sm > * + * {
   margin-top: 0.6rem;
 }
