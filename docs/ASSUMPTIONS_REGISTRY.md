@@ -22,3 +22,4 @@
 - [TENTATIVE] Dashboard quick-status actions use the literal status values `new`, `in progress`, `waiting`, and `done` for direct in-list updates.
 - [TENTATIVE] Dashboard urgency cues classify deadlines using UTC calendar days with a 7-day `due soon` window; missing/invalid deadlines are treated as `no deadline`.
 - [TENTATIVE] Dashboard notes previews default to a 140-character collapsed snippet, with inline expand/collapse controls only when notes exceed that length.
+- [TENTATIVE] First-run onboarding guidance and the `Load sample opportunities` action appear only when the dashboard is in active/all view and the user has zero stored opportunities.

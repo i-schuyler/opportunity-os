@@ -74,7 +74,7 @@ function loadDashboardModule(mocks) {
     '\n'
   );
   source +=
-    '\nmodule.exports = { initializeDashboard, buildCard, normalizeSafeSourceLink, normalizeDashboardFilters, deriveStatusOptions, filterOpportunityItems, sortOpportunityItems, classifyDeadlineUrgency };\n';
+    '\nmodule.exports = { initializeDashboard, buildCard, buildSampleOpportunitySeeds, normalizeSafeSourceLink, normalizeDashboardFilters, deriveStatusOptions, filterOpportunityItems, sortOpportunityItems, classifyDeadlineUrgency };\n';
 
   const context = {
     ...mocks,
@@ -629,6 +629,169 @@ function clickCardAction(listNode, cardId, action, statusValue = '') {
   );
 
   assert.strictEqual(notesSection, null, 'expected no notes section for empty notes');
+})();
+
+(function testDashboardFirstRunEmptyStateGuidanceRenders() {
+  const { win, doc, nodes } = makeDashboardHarness();
+
+  const { initializeDashboard } = loadDashboardModule({
+    getMockSession: () => ({ userId: 'dev-user', email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {},
+    listOpportunitiesForUser: () => [],
+    createOpportunityForUser: () => {
+      throw new Error('createOpportunityForUser should not run before sample action click');
+    },
+    updateOpportunityForUser: () => {},
+    archiveOpportunityForUser: () => {},
+    deleteOpportunityForUser: () => {},
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+
+  const emptyState = findFirstNode(
+    nodes.list,
+    (node) => node.tagName === 'section' && node.className.includes('empty-state')
+  );
+  const sampleButton = findFirstNode(
+    nodes.list,
+    (node) => node.tagName === 'button' && node.textContent === 'Load sample opportunities'
+  );
+
+  assert.ok(emptyState, 'expected first-run empty-state container');
+  assert.ok(
+    emptyState.textContent.includes('Start with one clear next step'),
+    'expected first-run empty-state headline'
+  );
+  assert.ok(
+    emptyState.textContent.includes('Add one opportunity you can act on this week.'),
+    'expected practical onboarding suggestion'
+  );
+  assert.ok(sampleButton, 'expected sample-data action in first-run empty state');
+})();
+
+(function testDashboardSampleDataActionPopulatesAndRenders() {
+  const model = loadOpportunityModel();
+  const storage = makeSessionStorage();
+  const userId = 'dev-user';
+  const { win, doc, nodes } = makeDashboardHarness();
+
+  const { initializeDashboard } = loadDashboardModule({
+    getMockSession: () => ({ userId, email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {},
+    listOpportunitiesForUser: (sessionUserId, options = {}) =>
+      model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+    createOpportunityForUser: (sessionUserId, seed) =>
+      model.createOpportunityForUser(sessionUserId, seed, { storage }),
+    updateOpportunityForUser: (sessionUserId, opportunityId, updates) =>
+      model.updateOpportunityForUser(sessionUserId, opportunityId, updates, { storage }),
+    archiveOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    deleteOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.deleteOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+  const sampleButton = findFirstNode(
+    nodes.list,
+    (node) => node.tagName === 'button' && node.textContent === 'Load sample opportunities'
+  );
+  assert.ok(sampleButton, 'expected first-run sample-data action');
+
+  sampleButton.trigger('click');
+
+  const persisted = model.listOpportunitiesForUser(userId, { includeArchived: true, storage });
+  assert.strictEqual(persisted.length, 4, 'expected four sample records after loading sample data');
+  assert.ok(persisted.some((item) => item.archived), 'expected an archived sample record');
+  assert.ok(persisted.some((item) => String(item.notes || '').trim()), 'expected notes in sample records');
+  assert.ok(
+    persisted.some((item) => String(item.contact || '').trim() || String(item.source_link || '').trim()),
+    'expected contact/source fields in sample records'
+  );
+
+  assert.strictEqual(renderedCardIds(nodes.list).length, 3, 'expected active sample records in active view');
+  assert.strictEqual(nodes.summary.textContent, 'Active: 3 | Archived: 1 | Showing: 3');
+
+  const renderedStatuses = Array.from(
+    nodes.statusFilter.children
+      .map((option) => option.value)
+      .filter((value) => value && value !== 'all')
+  );
+  assert.ok(renderedStatuses.includes('new'), 'expected sample status option: new');
+  assert.ok(renderedStatuses.includes('in progress'), 'expected sample status option: in progress');
+  assert.ok(renderedStatuses.includes('waiting'), 'expected sample status option: waiting');
+  assert.ok(renderedStatuses.includes('done'), 'expected sample status option: done');
+
+  nodes.viewFilter.value = 'archived';
+  nodes.viewFilter.trigger('change');
+  assert.strictEqual(renderedCardIds(nodes.list).length, 1, 'expected archived sample item in archived view');
+})();
+
+(function testDashboardSampleDataActionUsesLocalDashboardPathsOnly() {
+  const { win, doc, nodes } = makeDashboardHarness();
+  const localItems = [];
+  let createCalls = 0;
+  let archiveCalls = 0;
+  let signOutCalls = 0;
+  let updateCalls = 0;
+  let deleteCalls = 0;
+
+  const { initializeDashboard } = loadDashboardModule({
+    getMockSession: () => ({ userId: 'dev-user', email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {
+      signOutCalls += 1;
+    },
+    listOpportunitiesForUser: (_sessionUserId, options = {}) => {
+      const includeArchived = Boolean(options.includeArchived);
+      return includeArchived ? Array.from(localItems) : localItems.filter((item) => !item.archived);
+    },
+    createOpportunityForUser: (_sessionUserId, payload) => {
+      createCalls += 1;
+      const created = {
+        id: `sample-${createCalls}`,
+        archived: false,
+        ...payload,
+      };
+      localItems.push(created);
+      return created;
+    },
+    updateOpportunityForUser: () => {
+      updateCalls += 1;
+    },
+    archiveOpportunityForUser: (_sessionUserId, id) => {
+      archiveCalls += 1;
+      const item = localItems.find((entry) => entry.id === id);
+      if (item) {
+        item.archived = true;
+      }
+    },
+    deleteOpportunityForUser: () => {
+      deleteCalls += 1;
+    },
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+  const sampleButton = findFirstNode(
+    nodes.list,
+    (node) => node.tagName === 'button' && node.textContent === 'Load sample opportunities'
+  );
+  assert.ok(sampleButton, 'expected sample-data action button');
+
+  sampleButton.trigger('click');
+
+  assert.strictEqual(createCalls, 4, 'expected sample action to create records through existing local model path');
+  assert.strictEqual(archiveCalls, 1, 'expected one sample record archived through existing local model path');
+  assert.strictEqual(updateCalls, 0, 'expected no update path usage during sample action');
+  assert.strictEqual(deleteCalls, 0, 'expected no delete path usage during sample action');
+  assert.strictEqual(signOutCalls, 0, 'expected no auth/sign-out path usage during sample action');
 })();
 
 (function testNormalizeDashboardFiltersDefaultsAndValidation() {

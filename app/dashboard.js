@@ -19,6 +19,8 @@ const DASHBOARD_SORT_MODES = new Set([
 const QUICK_STATUS_VALUES = ['new', 'in progress', 'waiting', 'done'];
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const NOTES_PREVIEW_MAX_LENGTH = 140;
+const SAMPLE_DATA_DEADLINE_SOON_DAYS = 3;
+const SAMPLE_DATA_DEADLINE_UPCOMING_DAYS = 21;
 const DEFAULT_DASHBOARD_FILTERS = {
   view: 'active',
   status: 'all',
@@ -65,6 +67,74 @@ function formatDate(value) {
     return 'No deadline';
   }
   return value;
+}
+
+function formatDateOffsetFromNow(daysFromNow, now = new Date()) {
+  const next = new Date(now);
+  next.setUTCDate(next.getUTCDate() + daysFromNow);
+  const year = next.getUTCFullYear();
+  const month = String(next.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(next.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export function buildSampleOpportunitySeeds(now = new Date()) {
+  return [
+    {
+      title: '[Sample] Housing lead near transit',
+      type: 'housing',
+      source_link: 'https://example.com/sample-housing-lead',
+      contact: 'housing-owner@example.com',
+      deadline: formatDateOffsetFromNow(SAMPLE_DATA_DEADLINE_SOON_DAYS, now),
+      status: 'new',
+      tags: ['sample', 'housing'],
+      notes: 'Sample note: ask if utilities are included before booking a visit.',
+    },
+    {
+      title: '[Sample] Freelance design referral',
+      type: 'job',
+      source_link: '',
+      contact: 'referrals@example.com',
+      deadline: formatDateOffsetFromNow(SAMPLE_DATA_DEADLINE_UPCOMING_DAYS, now),
+      status: 'in progress',
+      tags: ['sample', 'portfolio'],
+      notes: '',
+    },
+    {
+      title: '[Sample] Community swap request',
+      type: 'barter',
+      source_link: 'https://example.com/sample-community-swap',
+      contact: '',
+      deadline: '',
+      status: 'waiting',
+      tags: ['sample', 'barter'],
+      notes: 'Sample note: waiting on confirmation from organizer.',
+    },
+    {
+      title: '[Sample] Closed neighborhood listing',
+      type: 'housing',
+      source_link: 'https://example.com/sample-closed-listing',
+      contact: 'sample-agent@example.com',
+      deadline: formatDateOffsetFromNow(-5, now),
+      status: 'done',
+      tags: ['sample', 'archived'],
+      notes: 'Sample archived item for testing archive view behavior.',
+      archived: true,
+    },
+  ];
+}
+
+function loadSampleOpportunitiesForUser(userId, now = new Date()) {
+  const seeds = buildSampleOpportunitySeeds(now);
+  seeds.forEach((seed) => {
+    const created = createOpportunityForUser(userId, {
+      ...seed,
+      archived: false,
+    });
+    if (seed.archived && created && created.id) {
+      archiveOpportunityForUser(userId, created.id);
+    }
+  });
 }
 
 export function classifyDeadlineUrgency(deadline, now = Date.now()) {
@@ -332,6 +402,40 @@ function getEmptyStateMessage(filters) {
   return 'No active opportunities yet. Add one above to keep your next step visible and practical.';
 }
 
+function buildFirstRunEmptyState(doc, onLoadSampleData) {
+  const emptyState = doc.createElement('section');
+  emptyState.className = 'panel panel--muted empty-state';
+
+  const title = doc.createElement('h3');
+  title.className = 'empty-state__title';
+  title.textContent = 'Start with one clear next step';
+
+  const intro = doc.createElement('p');
+  intro.className = 'meta';
+  intro.textContent = 'Opportunity OS helps you keep opportunities visible so follow-up does not get lost.';
+
+  const suggestions = doc.createElement('ul');
+  suggestions.className = 'empty-state__tips';
+  ['Add one opportunity you can act on this week.', 'Set a deadline so urgency badges can highlight what needs attention soon.', 'Capture one contact or note to make follow-up easier.'].forEach((tip) => {
+    const item = doc.createElement('li');
+    item.textContent = tip;
+    suggestions.append(item);
+  });
+
+  const sampleButton = doc.createElement('button');
+  sampleButton.type = 'button';
+  sampleButton.className = 'button';
+  sampleButton.textContent = 'Load sample opportunities';
+  sampleButton.addEventListener('click', () => {
+    if (typeof onLoadSampleData === 'function') {
+      onLoadSampleData();
+    }
+  });
+
+  emptyState.append(title, intro, suggestions, sampleButton);
+  return emptyState;
+}
+
 function setFormFromOpportunity(form, item) {
   form.elements.id.value = item.id;
   form.elements.title.value = item.title;
@@ -588,10 +692,20 @@ export function initializeDashboard(win = window, doc = document) {
     }
 
     if (sortedItems.length === 0) {
-      const emptyState = doc.createElement('p');
-      emptyState.className = 'panel panel--muted empty-state';
-      emptyState.textContent = getEmptyStateMessage(filterState);
-      listNode.append(emptyState);
+      const isFirstRunView = filterState.view === 'active' && filterState.status === 'all' && allItems.length === 0;
+      if (isFirstRunView) {
+        listNode.append(
+          buildFirstRunEmptyState(doc, () => {
+            loadSampleOpportunitiesForUser(session.userId);
+            renderList();
+          })
+        );
+      } else {
+        const emptyState = doc.createElement('p');
+        emptyState.className = 'panel panel--muted empty-state';
+        emptyState.textContent = getEmptyStateMessage(filterState);
+        listNode.append(emptyState);
+      }
     } else {
       sortedItems.forEach((item) => {
         listNode.append(buildCard(item, doc));
