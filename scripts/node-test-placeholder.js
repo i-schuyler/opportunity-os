@@ -19,18 +19,27 @@ assert.ok(
   'expected opportunity-seekers messaging in index.html'
 );
 
-function makeSessionStorage() {
+function makeSessionStorage(initialValues = {}) {
   const map = new Map();
+  const setCalls = [];
+
+  Object.entries(initialValues).forEach(([key, value]) => {
+    map.set(key, String(value));
+  });
+
   return {
     getItem(key) {
       return map.has(key) ? map.get(key) : null;
     },
     setItem(key, value) {
-      map.set(key, String(value));
+      const normalized = String(value);
+      setCalls.push({ key, value: normalized });
+      map.set(key, normalized);
     },
     removeItem(key) {
       map.delete(key);
     },
+    _setCalls: setCalls,
   };
 }
 
@@ -216,6 +225,8 @@ class FakeElement {
     this.href = '';
     this.target = '';
     this.rel = '';
+    this.value = '';
+    this.listeners = new Map();
     this._textContent = '';
   }
 
@@ -240,6 +251,32 @@ class FakeElement {
         return;
       }
       this.children.push(node);
+    });
+  }
+
+  replaceChildren(...nodes) {
+    this.children = [];
+    this._textContent = '';
+    if (nodes.length > 0) {
+      this.append(...nodes);
+    }
+  }
+
+  addEventListener(type, handler) {
+    if (!this.listeners.has(type)) {
+      this.listeners.set(type, []);
+    }
+    this.listeners.get(type).push(handler);
+  }
+
+  trigger(type, eventOverrides = {}) {
+    const handlers = this.listeners.get(type) || [];
+    handlers.forEach((handler) => {
+      handler({
+        target: this,
+        preventDefault() {},
+        ...eventOverrides,
+      });
     });
   }
 }
@@ -279,6 +316,68 @@ function testOpportunityItem(source_link) {
     notes: 'note',
     archived: false,
   };
+}
+
+function makeDashboardHarness({ storedFilters = null } = {}) {
+  const storageKey = 'opportunityOsDashboardFilters';
+  const storage = makeSessionStorage(
+    storedFilters
+      ? {
+          [storageKey]: JSON.stringify(storedFilters),
+        }
+      : {}
+  );
+
+  const nodes = {
+    sessionEmail: new FakeElement('p'),
+    list: new FakeElement('div'),
+    viewFilter: new FakeElement('select'),
+    statusFilter: new FakeElement('select'),
+    summary: new FakeElement('p'),
+  };
+
+  const nodeById = {
+    'session-email': nodes.sessionEmail,
+    'opportunity-list': nodes.list,
+    'filter-view': nodes.viewFilter,
+    'filter-status': nodes.statusFilter,
+    'filter-summary': nodes.summary,
+    'opportunity-form': null,
+    'save-opportunity-button': null,
+    'cancel-edit-button': null,
+    'sign-out-button': null,
+  };
+
+  const doc = {
+    getElementById(id) {
+      return Object.prototype.hasOwnProperty.call(nodeById, id) ? nodeById[id] : null;
+    },
+    createElement(tagName) {
+      return new FakeElement(tagName);
+    },
+    body: {
+      prepend() {},
+    },
+  };
+
+  const win = {
+    location: {
+      search: '?mockAuth=1',
+      replace() {
+        throw new Error('replace should not be called in authenticated dashboard test path');
+      },
+      assign() {
+        throw new Error('assign should not be called in dashboard filter tests');
+      },
+    },
+    sessionStorage: storage,
+  };
+
+  return { win, doc, nodes, storage };
+}
+
+function renderedCardIds(listNode) {
+  return listNode.children.filter((node) => node && node.tagName === 'article').map((node) => node.dataset.id);
 }
 
 (function testDashboardSourceLinkHttpsIsClickable() {
@@ -380,6 +479,156 @@ function testOpportunityItem(source_link) {
   assert.deepStrictEqual(
     archivedApplied.map((item) => item.id),
     ['4']
+  );
+})();
+
+(function testDashboardFiltersRestoreRenderAndPersistOnChange() {
+  const items = [
+    {
+      id: 'active-applied',
+      title: 'Active applied',
+      type: 'general',
+      source_link: '',
+      contact: '',
+      deadline: '',
+      status: 'applied',
+      tags: [],
+      notes: '',
+      archived: false,
+    },
+    {
+      id: 'active-new',
+      title: 'Active new',
+      type: 'general',
+      source_link: '',
+      contact: '',
+      deadline: '',
+      status: 'new',
+      tags: [],
+      notes: '',
+      archived: false,
+    },
+    {
+      id: 'archived-interviewing',
+      title: 'Archived interviewing',
+      type: 'general',
+      source_link: '',
+      contact: '',
+      deadline: '',
+      status: 'interviewing',
+      tags: [],
+      notes: '',
+      archived: true,
+    },
+  ];
+
+  const { win, doc, nodes, storage } = makeDashboardHarness({
+    storedFilters: { view: 'archived', status: 'interviewing' },
+  });
+
+  const { initializeDashboard } = loadDashboardModule({
+    getMockSession: () => ({ userId: 'dev-user', email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {},
+    listOpportunitiesForUser: () => items,
+    createOpportunityForUser: () => {
+      throw new Error('createOpportunityForUser should not run in filter render test');
+    },
+    updateOpportunityForUser: () => {
+      throw new Error('updateOpportunityForUser should not run in filter render test');
+    },
+    archiveOpportunityForUser: () => {
+      throw new Error('archiveOpportunityForUser should not run in filter render test');
+    },
+    deleteOpportunityForUser: () => {
+      throw new Error('deleteOpportunityForUser should not run in filter render test');
+    },
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+
+  assert.strictEqual(nodes.viewFilter.value, 'archived');
+  assert.strictEqual(nodes.statusFilter.value, 'interviewing');
+  assert.deepStrictEqual(renderedCardIds(nodes.list), ['archived-interviewing']);
+  assert.strictEqual(nodes.summary.textContent, 'Active: 2 | Archived: 1 | Showing: 1');
+
+  nodes.viewFilter.value = 'active';
+  nodes.viewFilter.trigger('change');
+  assert.deepStrictEqual(renderedCardIds(nodes.list), []);
+  assert.strictEqual(nodes.summary.textContent, 'Active: 2 | Archived: 1 | Showing: 0');
+  assert.strictEqual(nodes.list.children[0].textContent, 'No active opportunities with status "interviewing" yet.');
+
+  nodes.statusFilter.value = 'applied';
+  nodes.statusFilter.trigger('change');
+  assert.deepStrictEqual(renderedCardIds(nodes.list), ['active-applied']);
+  assert.strictEqual(nodes.summary.textContent, 'Active: 2 | Archived: 1 | Showing: 1');
+
+  const lastWrite = storage._setCalls[storage._setCalls.length - 1];
+  assert.strictEqual(lastWrite.key, 'opportunityOsDashboardFilters');
+  assert.deepStrictEqual(JSON.parse(lastWrite.value), { view: 'active', status: 'applied' });
+})();
+
+(function testDashboardInvalidPersistedStatusFallsBackToAll() {
+  const items = [
+    {
+      id: 'active-applied',
+      title: 'Active applied',
+      type: 'general',
+      source_link: '',
+      contact: '',
+      deadline: '',
+      status: 'applied',
+      tags: [],
+      notes: '',
+      archived: false,
+    },
+    {
+      id: 'active-new',
+      title: 'Active new',
+      type: 'general',
+      source_link: '',
+      contact: '',
+      deadline: '',
+      status: 'new',
+      tags: [],
+      notes: '',
+      archived: false,
+    },
+  ];
+
+  const { win, doc, nodes, storage } = makeDashboardHarness({
+    storedFilters: { view: 'active', status: 'not-present' },
+  });
+
+  const { initializeDashboard } = loadDashboardModule({
+    getMockSession: () => ({ userId: 'dev-user', email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {},
+    listOpportunitiesForUser: () => items,
+    createOpportunityForUser: () => {},
+    updateOpportunityForUser: () => {},
+    archiveOpportunityForUser: () => {},
+    deleteOpportunityForUser: () => {},
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+
+  assert.strictEqual(nodes.statusFilter.value, 'all');
+  assert.deepStrictEqual(renderedCardIds(nodes.list), ['active-applied', 'active-new']);
+  assert.strictEqual(nodes.summary.textContent, 'Active: 2 | Archived: 0 | Showing: 2');
+  assert.ok(
+    storage._setCalls.some((entry) => {
+      if (entry.key !== 'opportunityOsDashboardFilters') {
+        return false;
+      }
+      const parsed = JSON.parse(entry.value);
+      return parsed.view === 'active' && parsed.status === 'all';
+    }),
+    'expected invalid persisted status to be rewritten as all'
   );
 })();
 
