@@ -29,6 +29,10 @@ button {
   font: inherit;
 }
 
+select {
+  font: inherit;
+}
+
 textarea {
   font: inherit;
 }
@@ -135,6 +139,7 @@ input[type='email'] {
 }
 
 input:not([type='checkbox']),
+select,
 textarea {
   border: 1px solid #d1d5db;
   border-radius: 10px;
@@ -286,4 +291,21 @@ textarea {
   align-items: center;
   display: inline-flex;
   gap: 0.45rem;
+}
+
+.field-inline {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.5rem;
+}
+
+.field-inline span {
+  color: #374151;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+#filter-view,
+#filter-status {
+  min-width: 140px;
 }
