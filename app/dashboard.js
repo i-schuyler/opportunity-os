@@ -17,6 +17,7 @@ const DASHBOARD_SORT_MODES = new Set([
   SORT_MODE_TITLE_AZ,
 ]);
 const QUICK_STATUS_VALUES = ['new', 'in progress', 'waiting', 'done'];
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_DASHBOARD_FILTERS = {
   view: 'active',
   status: 'all',
@@ -63,6 +64,52 @@ function formatDate(value) {
     return 'No deadline';
   }
   return value;
+}
+
+export function classifyDeadlineUrgency(deadline, now = Date.now()) {
+  const normalizedDeadline = String(deadline || '').trim();
+  if (!normalizedDeadline) {
+    return 'no_deadline';
+  }
+
+  const parsedDeadline = Date.parse(normalizedDeadline);
+  if (Number.isNaN(parsedDeadline)) {
+    return 'no_deadline';
+  }
+
+  const nowDate = new Date(now);
+  const deadlineDate = new Date(parsedDeadline);
+  const todayUtc = Date.UTC(nowDate.getUTCFullYear(), nowDate.getUTCMonth(), nowDate.getUTCDate());
+  const deadlineUtc = Date.UTC(deadlineDate.getUTCFullYear(), deadlineDate.getUTCMonth(), deadlineDate.getUTCDate());
+  const dayDelta = Math.floor((deadlineUtc - todayUtc) / ONE_DAY_MS);
+
+  if (dayDelta < 0) {
+    return 'overdue';
+  }
+
+  if (dayDelta <= 7) {
+    return 'due_soon';
+  }
+
+  return 'upcoming';
+}
+
+function getDeadlineUrgencyMeta(deadline, now = Date.now()) {
+  const urgency = classifyDeadlineUrgency(deadline, now);
+
+  if (urgency === 'overdue') {
+    return { label: 'Overdue', className: 'urgency-badge urgency-badge--overdue' };
+  }
+
+  if (urgency === 'due_soon') {
+    return { label: 'Due soon', className: 'urgency-badge urgency-badge--due-soon' };
+  }
+
+  if (urgency === 'upcoming') {
+    return { label: 'Upcoming', className: 'urgency-badge urgency-badge--upcoming' };
+  }
+
+  return { label: 'No deadline', className: 'urgency-badge urgency-badge--no-deadline' };
 }
 
 function makeMeta(doc, label, value) {
@@ -261,7 +308,16 @@ function buildCard(item, doc) {
   status.className = 'meta';
   status.textContent = item.status || 'new';
 
-  header.append(title, status);
+  const urgency = doc.createElement('span');
+  const urgencyMeta = getDeadlineUrgencyMeta(item.deadline);
+  urgency.className = urgencyMeta.className;
+  urgency.textContent = urgencyMeta.label;
+
+  const headerMeta = doc.createElement('div');
+  headerMeta.className = 'opportunity-card__header-meta';
+  headerMeta.append(status, urgency);
+
+  header.append(title, headerMeta);
 
   const meta = doc.createElement('div');
   meta.className = 'opportunity-card__meta';

@@ -74,7 +74,7 @@ function loadDashboardModule(mocks) {
     '\n'
   );
   source +=
-    '\nmodule.exports = { initializeDashboard, buildCard, normalizeSafeSourceLink, normalizeDashboardFilters, deriveStatusOptions, filterOpportunityItems, sortOpportunityItems };\n';
+    '\nmodule.exports = { initializeDashboard, buildCard, normalizeSafeSourceLink, normalizeDashboardFilters, deriveStatusOptions, filterOpportunityItems, sortOpportunityItems, classifyDeadlineUrgency };\n';
 
   const context = {
     ...mocks,
@@ -474,6 +474,25 @@ function clickCardAction(listNode, cardId, action, statusValue = '') {
   assert.ok(sourceText, 'expected malformed source link to render as non-clickable source text');
 })();
 
+(function testDashboardBuildCardShowsUrgencyBadge() {
+  const { buildCard } = loadDashboardModule({});
+  const doc = new FakeDocument();
+  const card = buildCard(
+    {
+      ...testOpportunityItem(''),
+      deadline: '2000-01-01',
+    },
+    doc
+  );
+  const urgency = findFirstNode(
+    card,
+    (node) => node.tagName === 'span' && node.className.includes('urgency-badge')
+  );
+
+  assert.ok(urgency, 'expected urgency badge to render in opportunity card');
+  assert.strictEqual(urgency.textContent, 'Overdue');
+})();
+
 (function testNormalizeDashboardFiltersDefaultsAndValidation() {
   const { normalizeDashboardFilters } = loadDashboardModule({});
 
@@ -598,6 +617,34 @@ function clickCardAction(listNode, cardId, action, statusValue = '') {
     sorted.map((item) => item.id),
     ['alpha', 'beta', 'zeta']
   );
+})();
+
+(function testClassifyDeadlineUrgencyOverdue() {
+  const { classifyDeadlineUrgency } = loadDashboardModule({});
+
+  const urgency = classifyDeadlineUrgency('2026-04-09', Date.parse('2026-04-10T12:00:00.000Z'));
+  assert.strictEqual(urgency, 'overdue');
+})();
+
+(function testClassifyDeadlineUrgencyDueSoon() {
+  const { classifyDeadlineUrgency } = loadDashboardModule({});
+
+  const urgency = classifyDeadlineUrgency('2026-04-17', Date.parse('2026-04-10T12:00:00.000Z'));
+  assert.strictEqual(urgency, 'due_soon');
+})();
+
+(function testClassifyDeadlineUrgencyNoDeadline() {
+  const { classifyDeadlineUrgency } = loadDashboardModule({});
+
+  const urgency = classifyDeadlineUrgency('', Date.parse('2026-04-10T12:00:00.000Z'));
+  assert.strictEqual(urgency, 'no_deadline');
+})();
+
+(function testClassifyDeadlineUrgencyInvalidIsConservative() {
+  const { classifyDeadlineUrgency } = loadDashboardModule({});
+
+  const urgency = classifyDeadlineUrgency('not-a-date', Date.parse('2026-04-10T12:00:00.000Z'));
+  assert.strictEqual(urgency, 'no_deadline');
 })();
 
 (function testDashboardFiltersRestoreRenderAndPersistOnChange() {
