@@ -66,14 +66,23 @@
 
         <section class="panel">
           <div class="shell__header--row">
-            <h2>Active opportunities</h2>
-            <label class="toggle">
-              <input id="show-archived-toggle" type="checkbox" />
-              <span>Show archived</span>
+            <h2>Opportunities</h2>
+            <label class="field-inline">
+              <span>View</span>
+              <select id="filter-view">
+                <option value="active">Active</option>
+                <option value="archived">Archived</option>
+              </select>
+            </label>
+            <label class="field-inline">
+              <span>Status</span>
+              <select id="filter-status">
+                <option value="all">All statuses</option>
+              </select>
             </label>
           </div>
+          <p id="filter-summary" class="meta"></p>
           <div id="opportunity-list" class="stack-sm"></div>
-          <div id="archived-opportunity-list" class="stack-sm" hidden></div>
         </section>
       </main>
     </div>

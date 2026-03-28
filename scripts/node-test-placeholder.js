@@ -59,12 +59,13 @@ function loadDashboardModule(mocks) {
   let source = fs.readFileSync(filePath, 'utf8');
 
   source = source.replace(/^import[\s\S]*?;\n/gm, '');
-  source = source.replace('export function initializeDashboard', 'function initializeDashboard');
+  source = source.replace(/export function\s+/g, 'function ');
   source = source.replace(
     /\nif \(typeof window !== 'undefined' && typeof document !== 'undefined'\) \{\n  initializeDashboard\(window, document\);\n\}\n?$/,
     '\n'
   );
-  source += '\nmodule.exports = { initializeDashboard, buildCard, normalizeSafeSourceLink };\n';
+  source +=
+    '\nmodule.exports = { initializeDashboard, buildCard, normalizeSafeSourceLink, normalizeDashboardFilters, deriveStatusOptions, filterOpportunityItems };\n';
 
   const context = {
     ...mocks,
@@ -320,6 +321,66 @@ function testOpportunityItem(source_link) {
 
   assert.strictEqual(link, null, 'expected malformed source link to be blocked');
   assert.ok(sourceText, 'expected malformed source link to render as non-clickable source text');
+})();
+
+(function testNormalizeDashboardFiltersDefaultsAndValidation() {
+  const { normalizeDashboardFilters } = loadDashboardModule({});
+
+  assert.strictEqual(normalizeDashboardFilters().view, 'active');
+  assert.strictEqual(normalizeDashboardFilters().status, 'all');
+
+  const normalized = normalizeDashboardFilters({
+    view: 'archived',
+    status: 'applied',
+  });
+  assert.strictEqual(normalized.view, 'archived');
+  assert.strictEqual(normalized.status, 'applied');
+
+  const fallback = normalizeDashboardFilters({
+    view: 'invalid',
+    status: '   ',
+  });
+  assert.strictEqual(fallback.view, 'active');
+  assert.strictEqual(fallback.status, 'all');
+})();
+
+(function testDeriveStatusOptionsDedupesAndSorts() {
+  const { deriveStatusOptions } = loadDashboardModule({});
+
+  const statuses = Array.from(
+    deriveStatusOptions([
+      { status: 'interviewing' },
+      { status: 'new' },
+      { status: 'applied' },
+      { status: 'new' },
+      { status: ' ' },
+    ])
+  );
+
+  assert.deepStrictEqual(statuses, ['applied', 'interviewing', 'new']);
+})();
+
+(function testFilterOpportunityItemsByViewAndStatus() {
+  const { filterOpportunityItems } = loadDashboardModule({});
+
+  const items = [
+    { id: '1', archived: false, status: 'new' },
+    { id: '2', archived: false, status: 'applied' },
+    { id: '3', archived: true, status: 'new' },
+    { id: '4', archived: true, status: 'applied' },
+  ];
+
+  const activeOnly = Array.from(filterOpportunityItems(items, { view: 'active', status: 'all' }));
+  assert.deepStrictEqual(
+    activeOnly.map((item) => item.id),
+    ['1', '2']
+  );
+
+  const archivedApplied = Array.from(filterOpportunityItems(items, { view: 'archived', status: 'applied' }));
+  assert.deepStrictEqual(
+    archivedApplied.map((item) => item.id),
+    ['4']
+  );
 })();
 
 (function testOpportunityModelCrud() {

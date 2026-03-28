@@ -7,6 +7,12 @@ import {
   updateOpportunityForUser,
 } from '../lib/opportunity-model.js';
 
+const DASHBOARD_FILTERS_STORAGE_KEY = 'opportunityOsDashboardFilters';
+const DEFAULT_DASHBOARD_FILTERS = {
+  view: 'active',
+  status: 'all',
+};
+
 function withCurrentSearch(path, win = window) {
   return `${path}${win.location.search || ''}`;
 }
@@ -67,6 +73,100 @@ function normalizeSafeSourceLink(value) {
   }
 
   return '';
+}
+
+export function normalizeDashboardFilters(rawFilters = {}) {
+  const next = {
+    ...DEFAULT_DASHBOARD_FILTERS,
+  };
+
+  if (rawFilters.view === 'active' || rawFilters.view === 'archived') {
+    next.view = rawFilters.view;
+  }
+
+  if (typeof rawFilters.status === 'string') {
+    const normalizedStatus = rawFilters.status.trim();
+    if (normalizedStatus) {
+      next.status = normalizedStatus;
+    }
+  }
+
+  return next;
+}
+
+function readDashboardFilters(win) {
+  if (!win || !win.sessionStorage) {
+    return { ...DEFAULT_DASHBOARD_FILTERS };
+  }
+
+  const raw = win.sessionStorage.getItem(DASHBOARD_FILTERS_STORAGE_KEY);
+  if (!raw) {
+    return { ...DEFAULT_DASHBOARD_FILTERS };
+  }
+
+  try {
+    return normalizeDashboardFilters(JSON.parse(raw));
+  } catch {
+    return { ...DEFAULT_DASHBOARD_FILTERS };
+  }
+}
+
+function persistDashboardFilters(win, filters) {
+  if (!win || !win.sessionStorage) {
+    return;
+  }
+
+  win.sessionStorage.setItem(DASHBOARD_FILTERS_STORAGE_KEY, JSON.stringify(normalizeDashboardFilters(filters)));
+}
+
+export function deriveStatusOptions(items = []) {
+  const statuses = new Set();
+
+  items.forEach((item) => {
+    const value = String(item.status || '').trim();
+    if (value) {
+      statuses.add(value);
+    }
+  });
+
+  return Array.from(statuses).sort((a, b) => a.localeCompare(b));
+}
+
+export function filterOpportunityItems(items = [], filters = DEFAULT_DASHBOARD_FILTERS) {
+  const normalizedFilters = normalizeDashboardFilters(filters);
+
+  return items.filter((item) => {
+    const matchesArchivedState = normalizedFilters.view === 'archived' ? Boolean(item.archived) : !item.archived;
+    if (!matchesArchivedState) {
+      return false;
+    }
+
+    if (normalizedFilters.status === 'all') {
+      return true;
+    }
+
+    return String(item.status || '').trim() === normalizedFilters.status;
+  });
+}
+
+function getEmptyStateMessage(filters) {
+  const normalizedFilters = normalizeDashboardFilters(filters);
+  const isArchivedView = normalizedFilters.view === 'archived';
+  const hasStatusFilter = normalizedFilters.status !== 'all';
+
+  if (hasStatusFilter && isArchivedView) {
+    return `No archived opportunities with status "${normalizedFilters.status}" yet.`;
+  }
+
+  if (hasStatusFilter) {
+    return `No active opportunities with status "${normalizedFilters.status}" yet.`;
+  }
+
+  if (isArchivedView) {
+    return 'No archived opportunities yet.';
+  }
+
+  return 'No active opportunities yet. Add one above to keep your next step visible and practical.';
 }
 
 function setFormFromOpportunity(form, item) {
@@ -191,66 +291,91 @@ export function initializeDashboard(win = window, doc = document) {
 
   const emailNode = doc.getElementById('session-email');
   const listNode = doc.getElementById('opportunity-list');
-  const archivedListNode = doc.getElementById('archived-opportunity-list');
-  const showArchivedToggle = doc.getElementById('show-archived-toggle');
+  const viewFilterNode = doc.getElementById('filter-view');
+  const statusFilterNode = doc.getElementById('filter-status');
+  const summaryNode = doc.getElementById('filter-summary');
   const form = doc.getElementById('opportunity-form');
   const saveButton = doc.getElementById('save-opportunity-button');
   const cancelEditButton = doc.getElementById('cancel-edit-button');
   const signOutButton = doc.getElementById('sign-out-button');
+  const filterState = readDashboardFilters(win);
 
   if (emailNode) {
     emailNode.textContent = `Signed in as ${session.email}`;
   }
 
-  function renderLists() {
-    if (!listNode || !archivedListNode) {
+  function renderList() {
+    if (!listNode) {
       return;
     }
 
-    const activeItems = listOpportunitiesForUser(session.userId);
-    const archivedItems = listOpportunitiesForUser(session.userId, { includeArchived: true }).filter(
-      (item) => item.archived
-    );
+    const allItems = listOpportunitiesForUser(session.userId, { includeArchived: true });
+    const activeCount = allItems.filter((item) => !item.archived).length;
+    const archivedCount = allItems.length - activeCount;
+    const statusOptions = deriveStatusOptions(allItems);
 
+    if (statusFilterNode) {
+      statusFilterNode.replaceChildren();
+      const allOption = doc.createElement('option');
+      allOption.value = 'all';
+      allOption.textContent = 'All statuses';
+      statusFilterNode.append(allOption);
+
+      statusOptions.forEach((status) => {
+        const option = doc.createElement('option');
+        option.value = status;
+        option.textContent = status;
+        statusFilterNode.append(option);
+      });
+
+      if (!statusOptions.includes(filterState.status) && filterState.status !== 'all') {
+        filterState.status = 'all';
+        persistDashboardFilters(win, filterState);
+      }
+
+      statusFilterNode.value = filterState.status;
+    }
+
+    if (viewFilterNode) {
+      viewFilterNode.value = filterState.view;
+    }
+
+    const filteredItems = filterOpportunityItems(allItems, filterState);
     listNode.replaceChildren();
-    archivedListNode.replaceChildren();
 
-    if (activeItems.length === 0) {
+    if (summaryNode) {
+      summaryNode.textContent = `Active: ${activeCount} | Archived: ${archivedCount} | Showing: ${filteredItems.length}`;
+    }
+
+    if (filteredItems.length === 0) {
       const emptyState = doc.createElement('p');
       emptyState.className = 'panel panel--muted empty-state';
-      emptyState.textContent =
-        'No active opportunities yet. Add one above to keep your next step visible and practical.';
+      emptyState.textContent = getEmptyStateMessage(filterState);
       listNode.append(emptyState);
     } else {
-      activeItems.forEach((item) => {
+      filteredItems.forEach((item) => {
         listNode.append(buildCard(item, doc));
       });
     }
-
-    if (showArchivedToggle && showArchivedToggle.checked) {
-      archivedListNode.hidden = false;
-      if (archivedItems.length === 0) {
-        const archivedEmpty = doc.createElement('p');
-        archivedEmpty.className = 'panel panel--muted empty-state';
-        archivedEmpty.textContent = 'No archived opportunities yet.';
-        archivedListNode.append(archivedEmpty);
-      } else {
-        const heading = doc.createElement('h3');
-        heading.textContent = 'Archived opportunities';
-        archivedListNode.append(heading);
-        archivedItems.forEach((item) => {
-          archivedListNode.append(buildCard(item, doc));
-        });
-      }
-    } else {
-      archivedListNode.hidden = true;
-    }
   }
 
-  renderLists();
+  renderList();
 
-  if (showArchivedToggle) {
-    showArchivedToggle.addEventListener('change', renderLists);
+  if (viewFilterNode) {
+    viewFilterNode.value = filterState.view;
+    viewFilterNode.addEventListener('change', () => {
+      filterState.view = viewFilterNode.value === 'archived' ? 'archived' : 'active';
+      persistDashboardFilters(win, filterState);
+      renderList();
+    });
+  }
+
+  if (statusFilterNode) {
+    statusFilterNode.addEventListener('change', () => {
+      filterState.status = statusFilterNode.value || 'all';
+      persistDashboardFilters(win, filterState);
+      renderList();
+    });
   }
 
   if (form) {
@@ -281,7 +406,7 @@ export function initializeDashboard(win = window, doc = document) {
       }
 
       resetForm(form, cancelEditButton, saveButton);
-      renderLists();
+      renderList();
     });
   }
 
@@ -313,7 +438,7 @@ export function initializeDashboard(win = window, doc = document) {
         if (form && form.elements.id.value === id) {
           resetForm(form, cancelEditButton, saveButton);
         }
-        renderLists();
+        renderList();
         return;
       }
 
@@ -322,7 +447,7 @@ export function initializeDashboard(win = window, doc = document) {
         if (form && form.elements.id.value === id) {
           resetForm(form, cancelEditButton, saveButton);
         }
-        renderLists();
+        renderList();
         return;
       }
 
@@ -344,7 +469,6 @@ export function initializeDashboard(win = window, doc = document) {
   }
 
   attachActionHandler(listNode);
-  attachActionHandler(archivedListNode);
 
   if (signOutButton) {
     signOutButton.addEventListener('click', () => {
