@@ -306,6 +306,7 @@ textarea {
 }
 
 #filter-view,
-#filter-status {
+#filter-status,
+#filter-sort {
   min-width: 140px;
 }

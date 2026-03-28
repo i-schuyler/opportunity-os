@@ -8,9 +8,18 @@ import {
 } from '../lib/opportunity-model.js';
 
 const DASHBOARD_FILTERS_STORAGE_KEY = 'opportunityOsDashboardFilters';
+const SORT_MODE_NEAREST_DEADLINE = 'deadline_nearest';
+const SORT_MODE_RECENTLY_UPDATED = 'updated_recent';
+const SORT_MODE_TITLE_AZ = 'title_az';
+const DASHBOARD_SORT_MODES = new Set([
+  SORT_MODE_NEAREST_DEADLINE,
+  SORT_MODE_RECENTLY_UPDATED,
+  SORT_MODE_TITLE_AZ,
+]);
 const DEFAULT_DASHBOARD_FILTERS = {
   view: 'active',
   status: 'all',
+  sort: SORT_MODE_NEAREST_DEADLINE,
 };
 
 function withCurrentSearch(path, win = window) {
@@ -91,6 +100,10 @@ export function normalizeDashboardFilters(rawFilters = {}) {
     }
   }
 
+  if (DASHBOARD_SORT_MODES.has(rawFilters.sort)) {
+    next.sort = rawFilters.sort;
+  }
+
   return next;
 }
 
@@ -147,6 +160,42 @@ export function filterOpportunityItems(items = [], filters = DEFAULT_DASHBOARD_F
 
     return String(item.status || '').trim() === normalizedFilters.status;
   });
+}
+
+function normalizeTimestamp(value) {
+  const parsed = Date.parse(String(value || '').trim());
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function normalizeDeadline(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const parsed = Date.parse(normalized);
+  if (Number.isNaN(parsed)) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  return parsed;
+}
+
+export function sortOpportunityItems(items = [], sortMode = SORT_MODE_NEAREST_DEADLINE) {
+  const normalizedSortMode = DASHBOARD_SORT_MODES.has(sortMode)
+    ? sortMode
+    : SORT_MODE_NEAREST_DEADLINE;
+  const nextItems = Array.from(items);
+
+  if (normalizedSortMode === SORT_MODE_TITLE_AZ) {
+    return nextItems.sort((a, b) => String(a.title || '').localeCompare(String(b.title || ''), undefined, { sensitivity: 'base' }));
+  }
+
+  if (normalizedSortMode === SORT_MODE_RECENTLY_UPDATED) {
+    return nextItems.sort((a, b) => normalizeTimestamp(b.updated_at) - normalizeTimestamp(a.updated_at));
+  }
+
+  return nextItems.sort((a, b) => normalizeDeadline(a.deadline) - normalizeDeadline(b.deadline));
 }
 
 function getEmptyStateMessage(filters) {
@@ -293,6 +342,7 @@ export function initializeDashboard(win = window, doc = document) {
   const listNode = doc.getElementById('opportunity-list');
   const viewFilterNode = doc.getElementById('filter-view');
   const statusFilterNode = doc.getElementById('filter-status');
+  const sortFilterNode = doc.getElementById('filter-sort');
   const summaryNode = doc.getElementById('filter-summary');
   const form = doc.getElementById('opportunity-form');
   const saveButton = doc.getElementById('save-opportunity-button');
@@ -340,20 +390,25 @@ export function initializeDashboard(win = window, doc = document) {
       viewFilterNode.value = filterState.view;
     }
 
+    if (sortFilterNode) {
+      sortFilterNode.value = filterState.sort;
+    }
+
     const filteredItems = filterOpportunityItems(allItems, filterState);
+    const sortedItems = sortOpportunityItems(filteredItems, filterState.sort);
     listNode.replaceChildren();
 
     if (summaryNode) {
-      summaryNode.textContent = `Active: ${activeCount} | Archived: ${archivedCount} | Showing: ${filteredItems.length}`;
+      summaryNode.textContent = `Active: ${activeCount} | Archived: ${archivedCount} | Showing: ${sortedItems.length}`;
     }
 
-    if (filteredItems.length === 0) {
+    if (sortedItems.length === 0) {
       const emptyState = doc.createElement('p');
       emptyState.className = 'panel panel--muted empty-state';
       emptyState.textContent = getEmptyStateMessage(filterState);
       listNode.append(emptyState);
     } else {
-      filteredItems.forEach((item) => {
+      sortedItems.forEach((item) => {
         listNode.append(buildCard(item, doc));
       });
     }
@@ -373,6 +428,16 @@ export function initializeDashboard(win = window, doc = document) {
   if (statusFilterNode) {
     statusFilterNode.addEventListener('change', () => {
       filterState.status = statusFilterNode.value || 'all';
+      persistDashboardFilters(win, filterState);
+      renderList();
+    });
+  }
+
+  if (sortFilterNode) {
+    sortFilterNode.addEventListener('change', () => {
+      filterState.sort = DASHBOARD_SORT_MODES.has(sortFilterNode.value)
+        ? sortFilterNode.value
+        : SORT_MODE_NEAREST_DEADLINE;
       persistDashboardFilters(win, filterState);
       renderList();
     });

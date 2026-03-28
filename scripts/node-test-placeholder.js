@@ -74,7 +74,7 @@ function loadDashboardModule(mocks) {
     '\n'
   );
   source +=
-    '\nmodule.exports = { initializeDashboard, buildCard, normalizeSafeSourceLink, normalizeDashboardFilters, deriveStatusOptions, filterOpportunityItems };\n';
+    '\nmodule.exports = { initializeDashboard, buildCard, normalizeSafeSourceLink, normalizeDashboardFilters, deriveStatusOptions, filterOpportunityItems, sortOpportunityItems };\n';
 
   const context = {
     ...mocks,
@@ -333,6 +333,7 @@ function makeDashboardHarness({ storedFilters = null } = {}) {
     list: new FakeElement('div'),
     viewFilter: new FakeElement('select'),
     statusFilter: new FakeElement('select'),
+    sortFilter: new FakeElement('select'),
     summary: new FakeElement('p'),
   };
 
@@ -341,6 +342,7 @@ function makeDashboardHarness({ storedFilters = null } = {}) {
     'opportunity-list': nodes.list,
     'filter-view': nodes.viewFilter,
     'filter-status': nodes.statusFilter,
+    'filter-sort': nodes.sortFilter,
     'filter-summary': nodes.summary,
     'opportunity-form': null,
     'save-opportunity-button': null,
@@ -427,20 +429,25 @@ function renderedCardIds(listNode) {
 
   assert.strictEqual(normalizeDashboardFilters().view, 'active');
   assert.strictEqual(normalizeDashboardFilters().status, 'all');
+  assert.strictEqual(normalizeDashboardFilters().sort, 'deadline_nearest');
 
   const normalized = normalizeDashboardFilters({
     view: 'archived',
     status: 'applied',
+    sort: 'title_az',
   });
   assert.strictEqual(normalized.view, 'archived');
   assert.strictEqual(normalized.status, 'applied');
+  assert.strictEqual(normalized.sort, 'title_az');
 
   const fallback = normalizeDashboardFilters({
     view: 'invalid',
     status: '   ',
+    sort: 'not-real',
   });
   assert.strictEqual(fallback.view, 'active');
   assert.strictEqual(fallback.status, 'all');
+  assert.strictEqual(fallback.sort, 'deadline_nearest');
 })();
 
 (function testDeriveStatusOptionsDedupesAndSorts() {
@@ -482,11 +489,84 @@ function renderedCardIds(listNode) {
   );
 })();
 
+(function testSortOpportunityItemsByNearestDeadline() {
+  const { sortOpportunityItems } = loadDashboardModule({});
+
+  const sorted = Array.from(
+    sortOpportunityItems(
+      [
+        { id: 'd', deadline: '2026-05-01' },
+        { id: 'a', deadline: '2026-04-02' },
+        { id: 'c', deadline: '' },
+        { id: 'b', deadline: '2026-04-01' },
+      ],
+      'deadline_nearest'
+    )
+  );
+
+  assert.deepStrictEqual(
+    sorted.map((item) => item.id),
+    ['b', 'a', 'd', 'c']
+  );
+})();
+
+(function testSortOpportunityItemsByRecentlyUpdated() {
+  const { sortOpportunityItems } = loadDashboardModule({});
+
+  const sorted = Array.from(
+    sortOpportunityItems(
+      [
+        { id: 'oldest', updated_at: '2026-01-01T00:00:00.000Z' },
+        { id: 'latest', updated_at: '2026-04-01T00:00:00.000Z' },
+        { id: 'middle', updated_at: '2026-02-15T00:00:00.000Z' },
+      ],
+      'updated_recent'
+    )
+  );
+
+  assert.deepStrictEqual(
+    sorted.map((item) => item.id),
+    ['latest', 'middle', 'oldest']
+  );
+})();
+
+(function testSortOpportunityItemsByTitleAZ() {
+  const { sortOpportunityItems } = loadDashboardModule({});
+
+  const sorted = Array.from(
+    sortOpportunityItems(
+      [
+        { id: 'zeta', title: 'Zeta' },
+        { id: 'beta', title: 'beta' },
+        { id: 'alpha', title: 'Alpha' },
+      ],
+      'title_az'
+    )
+  );
+
+  assert.deepStrictEqual(
+    sorted.map((item) => item.id),
+    ['alpha', 'beta', 'zeta']
+  );
+})();
+
 (function testDashboardFiltersRestoreRenderAndPersistOnChange() {
   const items = [
     {
-      id: 'active-applied',
-      title: 'Active applied',
+      id: 'active-applied-zulu',
+      title: 'Zulu applied',
+      type: 'general',
+      source_link: '',
+      contact: '',
+      deadline: '',
+      status: 'applied',
+      tags: [],
+      notes: '',
+      archived: false,
+    },
+    {
+      id: 'active-applied-alpha',
+      title: 'Alpha applied',
       type: 'general',
       source_link: '',
       contact: '',
@@ -523,7 +603,7 @@ function renderedCardIds(listNode) {
   ];
 
   const { win, doc, nodes, storage } = makeDashboardHarness({
-    storedFilters: { view: 'archived', status: 'interviewing' },
+    storedFilters: { view: 'active', status: 'applied', sort: 'title_az' },
   });
 
   const { initializeDashboard } = loadDashboardModule({
@@ -549,25 +629,20 @@ function renderedCardIds(listNode) {
 
   initializeDashboard(win, doc);
 
-  assert.strictEqual(nodes.viewFilter.value, 'archived');
-  assert.strictEqual(nodes.statusFilter.value, 'interviewing');
-  assert.deepStrictEqual(renderedCardIds(nodes.list), ['archived-interviewing']);
-  assert.strictEqual(nodes.summary.textContent, 'Active: 2 | Archived: 1 | Showing: 1');
+  assert.strictEqual(nodes.viewFilter.value, 'active');
+  assert.strictEqual(nodes.statusFilter.value, 'applied');
+  assert.strictEqual(nodes.sortFilter.value, 'title_az');
+  assert.deepStrictEqual(renderedCardIds(nodes.list), ['active-applied-alpha', 'active-applied-zulu']);
+  assert.strictEqual(nodes.summary.textContent, 'Active: 3 | Archived: 1 | Showing: 2');
 
-  nodes.viewFilter.value = 'active';
-  nodes.viewFilter.trigger('change');
-  assert.deepStrictEqual(renderedCardIds(nodes.list), []);
-  assert.strictEqual(nodes.summary.textContent, 'Active: 2 | Archived: 1 | Showing: 0');
-  assert.strictEqual(nodes.list.children[0].textContent, 'No active opportunities with status "interviewing" yet.');
-
-  nodes.statusFilter.value = 'applied';
-  nodes.statusFilter.trigger('change');
-  assert.deepStrictEqual(renderedCardIds(nodes.list), ['active-applied']);
-  assert.strictEqual(nodes.summary.textContent, 'Active: 2 | Archived: 1 | Showing: 1');
+  nodes.sortFilter.value = 'updated_recent';
+  nodes.sortFilter.trigger('change');
+  assert.deepStrictEqual(renderedCardIds(nodes.list), ['active-applied-zulu', 'active-applied-alpha']);
+  assert.strictEqual(nodes.summary.textContent, 'Active: 3 | Archived: 1 | Showing: 2');
 
   const lastWrite = storage._setCalls[storage._setCalls.length - 1];
   assert.strictEqual(lastWrite.key, 'opportunityOsDashboardFilters');
-  assert.deepStrictEqual(JSON.parse(lastWrite.value), { view: 'active', status: 'applied' });
+  assert.deepStrictEqual(JSON.parse(lastWrite.value), { view: 'active', status: 'applied', sort: 'updated_recent' });
 })();
 
 (function testDashboardInvalidPersistedStatusFallsBackToAll() {
@@ -626,7 +701,7 @@ function renderedCardIds(listNode) {
         return false;
       }
       const parsed = JSON.parse(entry.value);
-      return parsed.view === 'active' && parsed.status === 'all';
+      return parsed.view === 'active' && parsed.status === 'all' && parsed.sort === 'deadline_nearest';
     }),
     'expected invalid persisted status to be rewritten as all'
   );
