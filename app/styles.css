@@ -272,6 +272,26 @@ textarea {
   margin-top: 0.85rem;
 }
 
+.opportunity-card__quick-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.button--subtle {
+  border-color: #9ca3af;
+  border-radius: 10px;
+  color: #374151;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0.2rem 0.5rem;
+}
+
+.button--subtle:hover,
+.button--subtle:focus-visible {
+  background: #f3f4f6;
+}
+
 .button--danger {
   border-color: #b91c1c;
   color: #991b1b;

@@ -226,6 +226,7 @@ class FakeElement {
     this.target = '';
     this.rel = '';
     this.value = '';
+    this.parentNode = null;
     this.listeners = new Map();
     this._textContent = '';
   }
@@ -250,11 +251,17 @@ class FakeElement {
         this.children.push(node);
         return;
       }
+      node.parentNode = this;
       this.children.push(node);
     });
   }
 
   replaceChildren(...nodes) {
+    this.children.forEach((child) => {
+      if (child && typeof child !== 'string') {
+        child.parentNode = null;
+      }
+    });
     this.children = [];
     this._textContent = '';
     if (nodes.length > 0) {
@@ -267,6 +274,29 @@ class FakeElement {
       this.listeners.set(type, []);
     }
     this.listeners.get(type).push(handler);
+  }
+
+  closest(selector) {
+    let current = this;
+
+    while (current) {
+      if (
+        selector === 'button[data-action]' &&
+        current.tagName === 'button' &&
+        current.dataset &&
+        current.dataset.action
+      ) {
+        return current;
+      }
+
+      if (selector === '[data-id]' && current.dataset && current.dataset.id) {
+        return current;
+      }
+
+      current = current.parentNode;
+    }
+
+    return null;
   }
 
   trigger(type, eventOverrides = {}) {
@@ -380,6 +410,26 @@ function makeDashboardHarness({ storedFilters = null } = {}) {
 
 function renderedCardIds(listNode) {
   return listNode.children.filter((node) => node && node.tagName === 'article').map((node) => node.dataset.id);
+}
+
+function findRenderedCard(listNode, cardId) {
+  return listNode.children.find((node) => node && node.tagName === 'article' && node.dataset.id === cardId) || null;
+}
+
+function clickCardAction(listNode, cardId, action, statusValue = '') {
+  const card = findRenderedCard(listNode, cardId);
+  assert.ok(card, `expected rendered card for id "${cardId}"`);
+  const targetButton = findFirstNode(
+    card,
+    (node) =>
+      node &&
+      node.tagName === 'button' &&
+      node.dataset &&
+      node.dataset.action === action &&
+      (statusValue ? node.dataset.status === statusValue : true)
+  );
+  assert.ok(targetButton, `expected button action "${action}" on card "${cardId}"`);
+  listNode.trigger('click', { target: targetButton });
 }
 
 (function testDashboardSourceLinkHttpsIsClickable() {
@@ -705,6 +755,93 @@ function renderedCardIds(listNode) {
     }),
     'expected invalid persisted status to be rewritten as all'
   );
+})();
+
+(function testDashboardQuickStatusChangeUpdatesItemAndPersists() {
+  const model = loadOpportunityModel();
+  const storage = makeSessionStorage();
+  const userId = 'dev-user';
+  const created = model.createOpportunityForUser(
+    userId,
+    {
+      title: 'Quick status target',
+      status: 'new',
+    },
+    { storage }
+  );
+
+  const { win, doc, nodes } = makeDashboardHarness();
+
+  const { initializeDashboard } = loadDashboardModule({
+    getMockSession: () => ({ userId, email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {},
+    listOpportunitiesForUser: (sessionUserId, options = {}) =>
+      model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+    createOpportunityForUser: (sessionUserId, seed) =>
+      model.createOpportunityForUser(sessionUserId, seed, { storage }),
+    updateOpportunityForUser: (sessionUserId, opportunityId, updates) =>
+      model.updateOpportunityForUser(sessionUserId, opportunityId, updates, { storage }),
+    archiveOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    deleteOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.deleteOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+  clickCardAction(nodes.list, created.id, 'quick_status', 'done');
+
+  const persisted = model.listOpportunitiesForUser(userId, { includeArchived: true, storage }).find((item) => item.id === created.id);
+  assert.ok(persisted, 'expected updated opportunity to remain persisted');
+  assert.strictEqual(persisted.status, 'done');
+
+  const rendered = findRenderedCard(nodes.list, created.id);
+  const statusNode = findFirstNode(rendered, (node) => node.tagName === 'span' && node.className === 'meta');
+  assert.ok(statusNode, 'expected rendered status node');
+  assert.strictEqual(statusNode.textContent, 'done');
+})();
+
+(function testDashboardQuickStatusChangeKeepsFilteredSortedViewCoherent() {
+  const model = loadOpportunityModel();
+  const storage = makeSessionStorage();
+  const userId = 'dev-user';
+
+  const zulu = model.createOpportunityForUser(userId, { title: 'Zulu', status: 'in progress' }, { storage });
+  const alpha = model.createOpportunityForUser(userId, { title: 'Alpha', status: 'in progress' }, { storage });
+  model.createOpportunityForUser(userId, { title: 'Beta', status: 'new' }, { storage });
+
+  const { win, doc, nodes } = makeDashboardHarness({
+    storedFilters: { view: 'active', status: 'in progress', sort: 'title_az' },
+  });
+
+  const { initializeDashboard } = loadDashboardModule({
+    getMockSession: () => ({ userId, email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {},
+    listOpportunitiesForUser: (sessionUserId, options = {}) =>
+      model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+    createOpportunityForUser: (sessionUserId, seed) =>
+      model.createOpportunityForUser(sessionUserId, seed, { storage }),
+    updateOpportunityForUser: (sessionUserId, opportunityId, updates) =>
+      model.updateOpportunityForUser(sessionUserId, opportunityId, updates, { storage }),
+    archiveOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    deleteOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.deleteOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+
+  assert.deepStrictEqual(renderedCardIds(nodes.list), [alpha.id, zulu.id]);
+  clickCardAction(nodes.list, zulu.id, 'quick_status', 'done');
+
+  assert.strictEqual(nodes.statusFilter.value, 'in progress');
+  assert.deepStrictEqual(renderedCardIds(nodes.list), [alpha.id]);
+  assert.strictEqual(nodes.summary.textContent, 'Active: 3 | Archived: 0 | Showing: 1');
 })();
 
 (function testOpportunityModelCrud() {
