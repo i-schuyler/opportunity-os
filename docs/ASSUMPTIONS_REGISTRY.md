@@ -21,3 +21,4 @@
 - [TENTATIVE] Dashboard nearest-deadline sorting treats missing/invalid deadlines conservatively by placing them last.
 - [TENTATIVE] Dashboard quick-status actions use the literal status values `new`, `in progress`, `waiting`, and `done` for direct in-list updates.
 - [TENTATIVE] Dashboard urgency cues classify deadlines using UTC calendar days with a 7-day `due soon` window; missing/invalid deadlines are treated as `no deadline`.
+- [TENTATIVE] Dashboard contact quick actions stay conservative: only simple email-like values map to `mailto:` and simple phone-like digit/separator values map to `tel:`, otherwise contact stays plain text.

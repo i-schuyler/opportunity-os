@@ -285,6 +285,23 @@ textarea {
   margin: 0.65rem 0;
 }
 
+.contact-quick-action {
+  border: 1px solid #d1d5db;
+  border-radius: 999px;
+  color: #14532d;
+  display: inline-block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0 0.45rem;
+  text-decoration: none;
+}
+
+.contact-quick-action:hover,
+.contact-quick-action:focus-visible {
+  background: #ecfdf3;
+  border-color: #86efac;
+}
+
 .opportunity-card__notes {
   margin: 0.65rem 0 0;
 }

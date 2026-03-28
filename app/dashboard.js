@@ -136,6 +136,67 @@ function normalizeSafeSourceLink(value) {
   return '';
 }
 
+function normalizeSafeEmailContact(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) {
+    return '';
+  }
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+    return '';
+  }
+
+  return normalized;
+}
+
+function normalizeSafePhoneContact(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) {
+    return '';
+  }
+
+  if (!/^\+?[\d().\-\s]+$/.test(normalized)) {
+    return '';
+  }
+
+  const plusCount = (normalized.match(/\+/g) || []).length;
+  if (plusCount > 1 || (plusCount === 1 && !normalized.startsWith('+'))) {
+    return '';
+  }
+
+  const digits = normalized.match(/\d/g) || [];
+  if (digits.length < 7 || digits.length > 15) {
+    return '';
+  }
+
+  const compact = normalized.replace(/[().\-\s]/g, '');
+  if (!/^\+?\d+$/.test(compact)) {
+    return '';
+  }
+
+  return compact;
+}
+
+function getContactQuickAction(contactValue) {
+  const safeEmail = normalizeSafeEmailContact(contactValue);
+  if (safeEmail) {
+    return {
+      href: `mailto:${encodeURIComponent(safeEmail)}`,
+      label: 'Email',
+    };
+  }
+
+  const safePhone = normalizeSafePhoneContact(contactValue);
+  if (safePhone) {
+    return {
+      href: `tel:${safePhone}`,
+      label: 'Call',
+    };
+  }
+
+  return null;
+}
+
 export function normalizeDashboardFilters(rawFilters = {}) {
   const next = {
     ...DEFAULT_DASHBOARD_FILTERS,
@@ -321,11 +382,20 @@ function buildCard(item, doc) {
 
   const meta = doc.createElement('div');
   meta.className = 'opportunity-card__meta';
-  meta.append(
-    makeMeta(doc, 'Type', item.type),
-    makeMeta(doc, 'Contact', item.contact),
-    makeMeta(doc, 'Deadline', formatDate(item.deadline))
-  );
+  meta.append(makeMeta(doc, 'Type', item.type));
+
+  const contact = doc.createElement('p');
+  const normalizedContact = String(item.contact || '').trim();
+  contact.textContent = `Contact: ${normalizedContact || '—'}`;
+  const contactAction = getContactQuickAction(normalizedContact);
+  if (contactAction) {
+    const contactLink = doc.createElement('a');
+    contactLink.className = 'contact-quick-action';
+    contactLink.href = contactAction.href;
+    contactLink.textContent = contactAction.label;
+    contact.append(' ', contactLink);
+  }
+  meta.append(contact, makeMeta(doc, 'Deadline', formatDate(item.deadline)));
 
   const rawSourceLink = String(item.source_link || '').trim();
   const safeSourceLink = normalizeSafeSourceLink(rawSourceLink);
