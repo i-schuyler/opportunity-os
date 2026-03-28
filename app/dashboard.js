@@ -51,6 +51,24 @@ function makeMeta(doc, label, value) {
   return line;
 }
 
+function normalizeSafeSourceLink(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) {
+    return '';
+  }
+
+  try {
+    const parsed = new URL(normalized);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.href;
+    }
+  } catch {
+    return '';
+  }
+
+  return '';
+}
+
 function setFormFromOpportunity(form, item) {
   form.elements.id.value = item.id;
   form.elements.title.value = item.title;
@@ -99,14 +117,20 @@ function buildCard(item, doc) {
     makeMeta(doc, 'Deadline', formatDate(item.deadline))
   );
 
-  if (item.source_link) {
+  const rawSourceLink = String(item.source_link || '').trim();
+  const safeSourceLink = normalizeSafeSourceLink(rawSourceLink);
+  if (rawSourceLink) {
     const source = doc.createElement('p');
-    const sourceLink = doc.createElement('a');
-    sourceLink.href = item.source_link;
-    sourceLink.textContent = 'Source link';
-    sourceLink.target = '_blank';
-    sourceLink.rel = 'noreferrer noopener';
-    source.append('Source: ', sourceLink);
+    if (safeSourceLink) {
+      const sourceLink = doc.createElement('a');
+      sourceLink.href = safeSourceLink;
+      sourceLink.textContent = 'Source link';
+      sourceLink.target = '_blank';
+      sourceLink.rel = 'noreferrer noopener';
+      source.append('Source: ', sourceLink);
+    } else {
+      source.textContent = `Source: ${rawSourceLink}`;
+    }
     meta.append(source);
   }
 

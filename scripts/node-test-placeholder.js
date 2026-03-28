@@ -54,7 +54,7 @@ function loadAuthScaffold(windowObj) {
   return context.module.exports;
 }
 
-function loadDashboardInitialize(mocks) {
+function loadDashboardModule(mocks) {
   const filePath = path.join(__dirname, '..', 'app', 'dashboard.js');
   let source = fs.readFileSync(filePath, 'utf8');
 
@@ -64,19 +64,20 @@ function loadDashboardInitialize(mocks) {
     /\nif \(typeof window !== 'undefined' && typeof document !== 'undefined'\) \{\n  initializeDashboard\(window, document\);\n\}\n?$/,
     '\n'
   );
-  source += '\nmodule.exports = { initializeDashboard };\n';
+  source += '\nmodule.exports = { initializeDashboard, buildCard, normalizeSafeSourceLink };\n';
 
   const context = {
     ...mocks,
     module: { exports: {} },
     exports: {},
     JSON,
+    URL,
     URLSearchParams,
   };
 
   vm.createContext(context);
   new vm.Script(source, { filename: filePath }).runInContext(context);
-  return context.module.exports.initializeDashboard;
+  return context.module.exports;
 }
 
 function loadOpportunityModel() {
@@ -185,7 +186,7 @@ function loadOpportunityModel() {
     },
   };
 
-  const initializeDashboard = loadDashboardInitialize({
+  const { initializeDashboard } = loadDashboardModule({
     getMockSession: () => null,
     isMockAuthEnabled: () => true,
     signOut: () => {},
@@ -200,6 +201,125 @@ function loadOpportunityModel() {
 
   assert.strictEqual(redirectedTo, './auth.html?mockAuth=1');
   assert.strictEqual(getElementByIdCalls, 0);
+})();
+
+class FakeElement {
+  constructor(tagName) {
+    this.tagName = String(tagName || '').toLowerCase();
+    this.children = [];
+    this.dataset = {};
+    this.className = '';
+    this.hidden = false;
+    this.disabled = false;
+    this.type = '';
+    this.href = '';
+    this.target = '';
+    this.rel = '';
+    this._textContent = '';
+  }
+
+  set textContent(value) {
+    this._textContent = String(value);
+    this.children = [];
+  }
+
+  get textContent() {
+    if (this.children.length > 0) {
+      return this.children
+        .map((child) => (typeof child === 'string' ? child : child.textContent))
+        .join('');
+    }
+    return this._textContent;
+  }
+
+  append(...nodes) {
+    nodes.forEach((node) => {
+      if (typeof node === 'string') {
+        this.children.push(node);
+        return;
+      }
+      this.children.push(node);
+    });
+  }
+}
+
+class FakeDocument {
+  createElement(tagName) {
+    return new FakeElement(tagName);
+  }
+}
+
+function findFirstNode(root, predicate) {
+  if (!root || typeof root === 'string') {
+    return null;
+  }
+  if (predicate(root)) {
+    return root;
+  }
+  for (const child of root.children) {
+    const found = findFirstNode(child, predicate);
+    if (found) {
+      return found;
+    }
+  }
+  return null;
+}
+
+function testOpportunityItem(source_link) {
+  return {
+    id: 'opp-1',
+    title: 'Test opportunity',
+    type: 'general',
+    source_link,
+    contact: 'person@example.com',
+    deadline: '',
+    status: 'new',
+    tags: [],
+    notes: 'note',
+    archived: false,
+  };
+}
+
+(function testDashboardSourceLinkHttpsIsClickable() {
+  const { buildCard } = loadDashboardModule({});
+  const doc = new FakeDocument();
+  const card = buildCard(testOpportunityItem('  https://example.com/path  '), doc);
+  const link = findFirstNode(card, (node) => node.tagName === 'a');
+
+  assert.ok(link, 'expected https source link to render as clickable anchor');
+  assert.strictEqual(link.href, 'https://example.com/path');
+})();
+
+(function testDashboardSourceLinkHttpIsClickable() {
+  const { buildCard } = loadDashboardModule({});
+  const doc = new FakeDocument();
+  const card = buildCard(testOpportunityItem('http://example.com/path'), doc);
+  const link = findFirstNode(card, (node) => node.tagName === 'a');
+
+  assert.ok(link, 'expected http source link to render as clickable anchor');
+  assert.strictEqual(link.href, 'http://example.com/path');
+})();
+
+(function testDashboardSourceLinkJavascriptIsNotClickable() {
+  const { buildCard } = loadDashboardModule({});
+  const doc = new FakeDocument();
+  const card = buildCard(testOpportunityItem('javascript:alert(1)'), doc);
+  const link = findFirstNode(card, (node) => node.tagName === 'a');
+  const sourceText = findFirstNode(card, (node) => node.tagName === 'p' && node.textContent.includes('Source:'));
+
+  assert.strictEqual(link, null, 'expected javascript: source link to be blocked');
+  assert.ok(sourceText, 'expected blocked javascript link to render as non-clickable source text');
+})();
+
+(function testDashboardSourceLinkMalformedIsNotClickable() {
+  const { buildCard } = loadDashboardModule({});
+  const doc = new FakeDocument();
+  const card = buildCard(testOpportunityItem('not-a-valid-url'), doc);
+  const link = findFirstNode(card, (node) => node.tagName === 'a');
+  const sourceText = findFirstNode(card, (node) => node.tagName === 'p' && node.textContent.includes('Source:'));
+
+  assert.strictEqual(link, null, 'expected malformed source link to be blocked');
+  assert.ok(sourceText, 'expected malformed source link to render as non-clickable source text');
 })();
 
 (function testOpportunityModelCrud() {
