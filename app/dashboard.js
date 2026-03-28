@@ -18,6 +18,7 @@ const DASHBOARD_SORT_MODES = new Set([
 ]);
 const QUICK_STATUS_VALUES = ['new', 'in progress', 'waiting', 'done'];
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const NOTES_PREVIEW_MAX_LENGTH = 140;
 const DEFAULT_DASHBOARD_FILTERS = {
   view: 'active',
   status: 'all',
@@ -344,9 +345,41 @@ function buildCard(item, doc) {
     meta.append(source);
   }
 
-  const notes = doc.createElement('p');
-  notes.className = 'opportunity-card__notes';
-  notes.textContent = truncate(item.notes, 160) || 'No notes yet.';
+  const normalizedNotes = String(item.notes || '').trim();
+  const hasNotes = normalizedNotes.length > 0;
+  const hasLongNotes = normalizedNotes.length > NOTES_PREVIEW_MAX_LENGTH;
+  let notes = null;
+
+  if (hasNotes) {
+    notes = doc.createElement('div');
+    notes.className = 'opportunity-card__notes';
+
+    const notesContent = doc.createElement('p');
+    notesContent.className = 'opportunity-card__notes-content';
+    let isExpanded = false;
+
+    const renderNotesContent = () => {
+      notesContent.textContent = isExpanded
+        ? normalizedNotes
+        : truncate(normalizedNotes, NOTES_PREVIEW_MAX_LENGTH);
+    };
+
+    renderNotesContent();
+    notes.append(notesContent);
+
+    if (hasLongNotes) {
+      const notesToggle = doc.createElement('button');
+      notesToggle.type = 'button';
+      notesToggle.className = 'button button--subtle opportunity-card__notes-toggle';
+      notesToggle.textContent = 'Show more';
+      notesToggle.addEventListener('click', () => {
+        isExpanded = !isExpanded;
+        notesToggle.textContent = isExpanded ? 'Show less' : 'Show more';
+        renderNotesContent();
+      });
+      notes.append(notesToggle);
+    }
+  }
 
   const tags = doc.createElement('div');
   tags.className = 'opportunity-card__tags';
@@ -399,7 +432,11 @@ function buildCard(item, doc) {
   deleteButton.textContent = 'Delete';
 
   actions.append(quickStatusActions, editButton, archiveButton, deleteButton);
-  card.append(header, meta, notes, tags, actions);
+  card.append(header, meta);
+  if (notes) {
+    card.append(notes);
+  }
+  card.append(tags, actions);
   return card;
 }
 

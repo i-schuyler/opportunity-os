@@ -493,6 +493,110 @@ function clickCardAction(listNode, cardId, action, statusValue = '') {
   assert.strictEqual(urgency.textContent, 'Overdue');
 })();
 
+(function testDashboardNotesShortRendersPreviewWithoutExpandControl() {
+  const { buildCard } = loadDashboardModule({});
+  const doc = new FakeDocument();
+  const card = buildCard(
+    {
+      ...testOpportunityItem(''),
+      notes: 'Short note for quick scan',
+    },
+    doc
+  );
+
+  const notesContent = findFirstNode(
+    card,
+    (node) => node.tagName === 'p' && node.className.includes('opportunity-card__notes-content')
+  );
+  const notesToggle = findFirstNode(
+    card,
+    (node) => node.tagName === 'button' && node.className.includes('opportunity-card__notes-toggle')
+  );
+
+  assert.ok(notesContent, 'expected notes content to render for short notes');
+  assert.strictEqual(notesContent.textContent, 'Short note for quick scan');
+  assert.strictEqual(notesToggle, null, 'expected no expand control for short notes');
+})();
+
+(function testDashboardNotesLongRendersExpandControl() {
+  const { buildCard } = loadDashboardModule({});
+  const doc = new FakeDocument();
+  const longNotes = 'Long note '.repeat(20).trim();
+  const card = buildCard(
+    {
+      ...testOpportunityItem(''),
+      notes: longNotes,
+    },
+    doc
+  );
+
+  const notesContent = findFirstNode(
+    card,
+    (node) => node.tagName === 'p' && node.className.includes('opportunity-card__notes-content')
+  );
+  const notesToggle = findFirstNode(
+    card,
+    (node) => node.tagName === 'button' && node.className.includes('opportunity-card__notes-toggle')
+  );
+
+  assert.ok(notesContent, 'expected notes preview for long notes');
+  assert.ok(notesToggle, 'expected expand control for long notes');
+  assert.ok(notesContent.textContent.endsWith('…'), 'expected collapsed preview to end with ellipsis');
+  assert.strictEqual(notesToggle.textContent, 'Show more');
+})();
+
+(function testDashboardNotesExpandCollapseTogglesRenderedContent() {
+  const { buildCard } = loadDashboardModule({});
+  const doc = new FakeDocument();
+  const longNotes = 'Long note '.repeat(20).trim();
+  const card = buildCard(
+    {
+      ...testOpportunityItem(''),
+      notes: longNotes,
+    },
+    doc
+  );
+
+  const notesContent = findFirstNode(
+    card,
+    (node) => node.tagName === 'p' && node.className.includes('opportunity-card__notes-content')
+  );
+  const notesToggle = findFirstNode(
+    card,
+    (node) => node.tagName === 'button' && node.className.includes('opportunity-card__notes-toggle')
+  );
+
+  assert.ok(notesContent, 'expected notes content for expand/collapse test');
+  assert.ok(notesToggle, 'expected toggle control for expand/collapse test');
+
+  notesToggle.trigger('click');
+  assert.strictEqual(notesContent.textContent, longNotes);
+  assert.strictEqual(notesToggle.textContent, 'Show less');
+
+  notesToggle.trigger('click');
+  assert.ok(notesContent.textContent.endsWith('…'), 'expected collapsed text after second click');
+  assert.strictEqual(notesToggle.textContent, 'Show more');
+})();
+
+(function testDashboardNotesEmptyRemainsClean() {
+  const { buildCard } = loadDashboardModule({});
+  const doc = new FakeDocument();
+  const card = buildCard(
+    {
+      ...testOpportunityItem(''),
+      notes: '   ',
+    },
+    doc
+  );
+
+  const notesSection = findFirstNode(
+    card,
+    (node) => node.tagName === 'div' && node.className.includes('opportunity-card__notes')
+  );
+
+  assert.strictEqual(notesSection, null, 'expected no notes section for empty notes');
+})();
+
 (function testNormalizeDashboardFiltersDefaultsAndValidation() {
   const { normalizeDashboardFilters } = loadDashboardModule({});
 

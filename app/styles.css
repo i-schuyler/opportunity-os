@@ -289,6 +289,15 @@ textarea {
   margin: 0.65rem 0 0;
 }
 
+.opportunity-card__notes-content {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.opportunity-card__notes-toggle {
+  margin-top: 0.35rem;
+}
+
 .opportunity-card__tags {
   display: flex;
   flex-wrap: wrap;
