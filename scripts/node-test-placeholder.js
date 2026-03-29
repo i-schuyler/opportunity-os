@@ -2490,6 +2490,107 @@ pendingAsyncTests.push(
   assert.strictEqual(selectionInput, null, 'expected free plan cards to hide bulk selection checkboxes');
 })();
 
+(function testDashboardFreePlanBlocksBulkArchiveHandlerMutationAndShowsLockFeedback() {
+  const model = loadOpportunityModel();
+  const storage = makeSessionStorage();
+  const userId = 'dev-user';
+
+  const first = model.createOpportunityForUser(userId, { title: 'First', status: 'new' }, { storage });
+  const second = model.createOpportunityForUser(userId, { title: 'Second', status: 'waiting' }, { storage });
+  const { win, doc, nodes } = makeDashboardHarness();
+  win.location.search = '?mockAuth=1';
+
+  let archiveCalls = 0;
+  const { initializeDashboard } = loadDashboardModule({
+    getMockSession: () => ({ userId, email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {},
+    listOpportunitiesForUser: (sessionUserId, options = {}) =>
+      model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+    createOpportunityForUser: (sessionUserId, seed) =>
+      model.createOpportunityForUser(sessionUserId, seed, { storage }),
+    updateOpportunityForUser: (sessionUserId, opportunityId, updates) =>
+      model.updateOpportunityForUser(sessionUserId, opportunityId, updates, { storage }),
+    archiveOpportunityForUser: (sessionUserId, opportunityId) => {
+      archiveCalls += 1;
+      return model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage });
+    },
+    deleteOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.deleteOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+  nodes.bulkArchiveButton.trigger('click');
+
+  const persisted = model.listOpportunitiesForUser(userId, { includeArchived: true, storage });
+  assert.strictEqual(archiveCalls, 0, 'expected free-plan bulk archive handler to short-circuit before mutation');
+  assert.strictEqual(
+    persisted.find((item) => item.id === first.id).archived,
+    false,
+    'expected first item to remain active when free-plan bulk archive is clicked'
+  );
+  assert.strictEqual(
+    persisted.find((item) => item.id === second.id).archived,
+    false,
+    'expected second item to remain active when free-plan bulk archive is clicked'
+  );
+  assert.strictEqual(nodes.subscriptionFeedback.hidden, false, 'expected lock feedback to be shown for free-plan bulk archive');
+  assert.strictEqual(nodes.subscriptionFeedback.textContent, 'Bulk actions are available on paid plans.');
+})();
+
+(function testDashboardFreePlanBlocksBulkStatusHandlerMutationAndShowsLockFeedback() {
+  const model = loadOpportunityModel();
+  const storage = makeSessionStorage();
+  const userId = 'dev-user';
+
+  const first = model.createOpportunityForUser(userId, { title: 'First', status: 'new' }, { storage });
+  const second = model.createOpportunityForUser(userId, { title: 'Second', status: 'waiting' }, { storage });
+  const { win, doc, nodes } = makeDashboardHarness();
+  win.location.search = '?mockAuth=1';
+
+  let statusUpdateCalls = 0;
+  const { initializeDashboard } = loadDashboardModule({
+    getMockSession: () => ({ userId, email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {},
+    listOpportunitiesForUser: (sessionUserId, options = {}) =>
+      model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+    createOpportunityForUser: (sessionUserId, seed) =>
+      model.createOpportunityForUser(sessionUserId, seed, { storage }),
+    updateOpportunityForUser: (sessionUserId, opportunityId, updates) => {
+      statusUpdateCalls += 1;
+      return model.updateOpportunityForUser(sessionUserId, opportunityId, updates, { storage });
+    },
+    archiveOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    deleteOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.deleteOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+  nodes.bulkStatusSelect.value = 'done';
+  nodes.bulkStatusApplyButton.trigger('click');
+
+  const persisted = model.listOpportunitiesForUser(userId, { includeArchived: true, storage });
+  assert.strictEqual(statusUpdateCalls, 0, 'expected free-plan bulk status handler to short-circuit before mutation');
+  assert.strictEqual(
+    persisted.find((item) => item.id === first.id).status,
+    'new',
+    'expected first item status to remain unchanged when free-plan bulk status is applied'
+  );
+  assert.strictEqual(
+    persisted.find((item) => item.id === second.id).status,
+    'waiting',
+    'expected second item status to remain unchanged when free-plan bulk status is applied'
+  );
+  assert.strictEqual(nodes.subscriptionFeedback.hidden, false, 'expected lock feedback to be shown for free-plan bulk status');
+  assert.strictEqual(nodes.subscriptionFeedback.textContent, 'Bulk actions are available on paid plans.');
+})();
+
 (function testDashboardPaidPlanUnlocksPaidSurfaces() {
   const model = loadOpportunityModel();
   const storage = makeSessionStorage();
