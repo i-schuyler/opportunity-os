@@ -74,7 +74,7 @@ function loadDashboardModule(mocks) {
     '\n'
   );
   source +=
-    '\nmodule.exports = { initializeDashboard, buildCard, buildSampleOpportunitySeeds, normalizeSafeSourceLink, normalizeDashboardFilters, deriveStatusOptions, deriveBulkStatusOptions, filterOpportunityItems, sortOpportunityItems, classifyDeadlineUrgency };\n';
+    '\nmodule.exports = { initializeDashboard, buildCard, buildSampleOpportunitySeeds, normalizeSafeSourceLink, normalizeDashboardFilters, deriveStatusOptions, deriveBulkStatusOptions, filterOpportunityItems, sortOpportunityItems, classifyDeadlineUrgency, buildOpportunityExportPayload, parseOpportunityImportPayload, mergeImportedOpportunitiesForUser };\n';
 
   const context = {
     ...mocks,
@@ -884,6 +884,122 @@ function toggleCardSelection(listNode, cardId, checked = true) {
   assert.deepStrictEqual(statuses, ['new', 'in progress', 'waiting', 'done', 'applied', 'interviewing']);
 })();
 
+(function testBuildOpportunityExportPayloadShape() {
+  const { buildOpportunityExportPayload } = loadDashboardModule({});
+
+  const payload = buildOpportunityExportPayload([
+    {
+      id: 'opp-1',
+      user_id: 'dev-user',
+      title: 'First',
+      type: 'housing',
+      source_link: 'https://example.com/1',
+      contact: 'person@example.com',
+      deadline: '2026-05-02',
+      status: 'new',
+      tags: ['housing'],
+      notes: 'note',
+      archived: true,
+      created_at: '2026-04-01T00:00:00.000Z',
+      updated_at: '2026-04-02T00:00:00.000Z',
+    },
+  ]);
+
+  assert.ok(payload, 'expected export payload object');
+  assert.ok(Array.isArray(payload.opportunities), 'expected opportunities array in export payload');
+  assert.strictEqual(payload.opportunities.length, 1);
+  assert.deepStrictEqual(Object.keys(payload.opportunities[0]).sort(), [
+    'archived',
+    'contact',
+    'created_at',
+    'deadline',
+    'id',
+    'notes',
+    'source_link',
+    'status',
+    'tags',
+    'title',
+    'type',
+    'updated_at',
+  ]);
+  assert.strictEqual(payload.opportunities[0].title, 'First');
+})();
+
+(function testParseOpportunityImportPayloadValid() {
+  const { parseOpportunityImportPayload } = loadDashboardModule({});
+
+  const parsed = parseOpportunityImportPayload(
+    JSON.stringify({
+      opportunities: [
+        {
+          id: 'import-1',
+          title: 'Imported',
+          status: 'waiting',
+          tags: ['one', ' two '],
+          archived: true,
+        },
+      ],
+    })
+  );
+
+  assert.strictEqual(parsed.opportunities.length, 1);
+  assert.strictEqual(parsed.opportunities[0].title, 'Imported');
+  assert.strictEqual(parsed.opportunities[0].status, 'waiting');
+  assert.deepStrictEqual(parsed.opportunities[0].tags, ['one', 'two']);
+  assert.strictEqual(parsed.opportunities[0].archived, true);
+})();
+
+(function testParseOpportunityImportPayloadRejectsInvalidShape() {
+  const { parseOpportunityImportPayload } = loadDashboardModule({});
+
+  assert.throws(
+    () => parseOpportunityImportPayload('{"notOpportunities": []}'),
+    /Invalid payload shape/
+  );
+  assert.throws(() => parseOpportunityImportPayload('{invalid-json'), /Invalid JSON/);
+  assert.throws(
+    () =>
+      parseOpportunityImportPayload(
+        JSON.stringify({
+          opportunities: [{ title: '   ' }],
+        })
+      ),
+    /non-empty title/
+  );
+})();
+
+(function testMergeImportedOpportunitiesForUserPopulatesOpportunities() {
+  const model = loadOpportunityModel();
+  const storage = makeSessionStorage();
+  const userId = 'dev-user';
+  const { mergeImportedOpportunitiesForUser } = loadDashboardModule({});
+
+  const existing = model.createOpportunityForUser(userId, { id: 'dup-id', title: 'Existing record' }, { storage });
+  assert.ok(existing.id, 'expected baseline existing record');
+
+  const importedCount = mergeImportedOpportunitiesForUser(
+    userId,
+    [
+      { id: 'dup-id', title: 'Imported duplicate id', status: 'new', archived: false },
+      { id: 'archived-id', title: 'Imported archived', status: 'done', archived: true },
+    ],
+    {
+      listOpportunitiesForUser: (sessionUserId, options = {}) =>
+        model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+      createOpportunityForUser: (sessionUserId, seed) =>
+        model.createOpportunityForUser(sessionUserId, seed, { storage }),
+      archiveOpportunityForUser: (sessionUserId, opportunityId) =>
+        model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    }
+  );
+
+  assert.strictEqual(importedCount, 2);
+  const persisted = model.listOpportunitiesForUser(userId, { includeArchived: true, storage });
+  assert.strictEqual(persisted.length, 3, 'expected merge behavior to append imported opportunities');
+  assert.ok(persisted.some((item) => item.title === 'Imported duplicate id'), 'expected imported record');
+  assert.ok(persisted.some((item) => item.title === 'Imported archived' && item.archived), 'expected archived import');
+})();
+
 (function testFilterOpportunityItemsByViewAndStatus() {
   const { filterOpportunityItems } = loadDashboardModule({});
 
@@ -1242,6 +1358,61 @@ function toggleCardSelection(listNode, cardId, checked = true) {
   assert.strictEqual(nodes.statusFilter.value, 'in progress');
   assert.deepStrictEqual(renderedCardIds(nodes.list), [alpha.id]);
   assert.strictEqual(nodes.summary.textContent, 'Active: 3 | Archived: 0 | Showing: 1');
+})();
+
+(function testDashboardBehaviorStillWorksAfterMergedImport() {
+  const model = loadOpportunityModel();
+  const storage = makeSessionStorage();
+  const userId = 'dev-user';
+  const { mergeImportedOpportunitiesForUser } = loadDashboardModule({});
+
+  mergeImportedOpportunitiesForUser(
+    userId,
+    [
+      { title: 'Imported one', status: 'new', archived: false },
+      { title: 'Imported two', status: 'new', archived: false },
+    ],
+    {
+      listOpportunitiesForUser: (sessionUserId, options = {}) =>
+        model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+      createOpportunityForUser: (sessionUserId, seed) =>
+        model.createOpportunityForUser(sessionUserId, seed, { storage }),
+      archiveOpportunityForUser: (sessionUserId, opportunityId) =>
+        model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    }
+  );
+
+  const imported = model.listOpportunitiesForUser(userId, { includeArchived: true, storage });
+  const targetId = imported[0].id;
+  const { win, doc, nodes } = makeDashboardHarness();
+
+  const { initializeDashboard } = loadDashboardModule({
+    getMockSession: () => ({ userId, email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {},
+    listOpportunitiesForUser: (sessionUserId, options = {}) =>
+      model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+    createOpportunityForUser: (sessionUserId, seed) =>
+      model.createOpportunityForUser(sessionUserId, seed, { storage }),
+    updateOpportunityForUser: (sessionUserId, opportunityId, updates) =>
+      model.updateOpportunityForUser(sessionUserId, opportunityId, updates, { storage }),
+    archiveOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    deleteOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.deleteOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+  clickCardAction(nodes.list, targetId, 'quick_status', 'done');
+
+  const persisted = model.listOpportunitiesForUser(userId, { includeArchived: true, storage });
+  assert.strictEqual(
+    persisted.find((item) => item.id === targetId).status,
+    'done',
+    'expected existing dashboard actions to work on imported records'
+  );
 })();
 
 (function testDashboardBulkSelectionShowsSelectedCount() {

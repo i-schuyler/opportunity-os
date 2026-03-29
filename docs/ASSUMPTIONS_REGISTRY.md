@@ -26,3 +26,4 @@
 - [TENTATIVE] Dashboard bulk actions target selected items in the current rendered view and clear selection after a bulk action completes.
 - [TENTATIVE] Dashboard bulk-status options are derived from quick-status defaults (`new`, `in progress`, `waiting`, `done`) plus statuses present in user data.
 - [TENTATIVE] In archived view, bulk archive stays disabled/no-op while bulk status changes remain allowed for selected archived items.
+- [TENTATIVE] Dashboard JSON import merges opportunities into existing user data (append behavior) rather than replacing stored records.

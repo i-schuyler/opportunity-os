@@ -88,8 +88,14 @@
                 <option value="title_az">Title A-Z</option>
               </select>
             </label>
+            <div class="dashboard-transfer-actions">
+              <button id="export-json-button" type="button" class="button button--subtle">Export JSON</button>
+              <button id="import-json-button" type="button" class="button button--subtle">Import JSON</button>
+              <input id="import-json-input" type="file" accept="application/json,.json" hidden />
+            </div>
           </div>
           <p id="filter-summary" class="meta"></p>
+          <p id="transfer-feedback" class="meta" hidden></p>
           <div id="bulk-actions" class="bulk-actions" hidden>
             <p id="selected-summary" class="meta"></p>
             <div class="bulk-actions__controls">
