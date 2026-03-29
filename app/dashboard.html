@@ -21,6 +21,18 @@
       </header>
 
       <main class="shell__main">
+        <section class="panel panel--muted subscription-boundary" id="subscription-boundary-panel">
+          <div class="shell__header--row">
+            <div>
+              <h2>Free vs paid</h2>
+              <p class="meta" id="subscription-summary"></p>
+            </div>
+            <button type="button" class="button button--solid" id="upgrade-cta-button">Upgrade</button>
+          </div>
+          <ul id="subscription-feature-list" class="subscription-feature-list"></ul>
+          <p class="meta" id="subscription-feedback" hidden></p>
+        </section>
+
         <section class="panel">
           <h2>Create or edit opportunity</h2>
           <form id="opportunity-form" class="opportunity-form stack-sm">
@@ -68,6 +80,7 @@
           <h2>Next best actions</h2>
           <p class="meta" id="next-best-action-summary">Practical follow-up suggestions from your active opportunities.</p>
           <ul id="next-best-action-list" class="next-best-action-list"></ul>
+          <p class="meta" id="next-best-action-lock-message" hidden></p>
         </section>
 
         <section class="panel panel--muted">

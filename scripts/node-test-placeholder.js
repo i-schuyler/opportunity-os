@@ -14,10 +14,15 @@ for (const file of requiredFiles) {
 }
 
 const html = fs.readFileSync(path.join(appDir, 'index.html'), 'utf8');
+const dashboardHtml = fs.readFileSync(path.join(appDir, 'dashboard.html'), 'utf8');
 assert.ok(html.includes('<title>Opportunity OS</title>'), 'expected shell title in index.html');
 assert.ok(
   html.includes('opportunity seekers') || html.includes('Opportunity seekers'),
   'expected opportunity-seekers messaging in index.html'
+);
+assert.ok(
+  dashboardHtml.includes('id="subscription-boundary-panel"'),
+  'expected dashboard subscription boundary panel to exist'
 );
 
 function makeSessionStorage(initialValues = {}) {
@@ -75,7 +80,7 @@ function loadDashboardModule(mocks) {
     '\n'
   );
   source +=
-    '\nmodule.exports = { initializeDashboard, buildCard, buildSampleOpportunitySeeds, normalizeSafeSourceLink, normalizeDashboardFilters, deriveStatusOptions, deriveBulkStatusOptions, filterOpportunityItems, sortOpportunityItems, classifyDeadlineUrgency, buildNextBestActions, buildDashboardChecklist, buildOpportunityExportPayload, parseOpportunityImportPayload, mergeImportedOpportunitiesForUser };\n';
+    '\nmodule.exports = { initializeDashboard, buildCard, buildSampleOpportunitySeeds, normalizeSafeSourceLink, normalizeDashboardFilters, deriveStatusOptions, deriveBulkStatusOptions, filterOpportunityItems, sortOpportunityItems, classifyDeadlineUrgency, buildNextBestActions, buildDashboardChecklist, buildOpportunityExportPayload, parseOpportunityImportPayload, mergeImportedOpportunitiesForUser, resolveLocalSubscriptionState, buildSubscriptionBoundaryState };\n';
 
   const context = {
     ...mocks,
@@ -369,7 +374,7 @@ function testOpportunityItem(source_link, overrides = {}) {
   };
 }
 
-function makeDashboardHarness({ storedFilters = null } = {}) {
+function makeDashboardHarness({ storedFilters = null, withForm = false, formValues = {} } = {}) {
   const storageKey = 'opportunityOsDashboardFilters';
   const storage = makeSessionStorage(
     storedFilters
@@ -382,11 +387,16 @@ function makeDashboardHarness({ storedFilters = null } = {}) {
   const nodes = {
     sessionEmail: new FakeElement('p'),
     list: new FakeElement('div'),
+    subscriptionSummary: new FakeElement('p'),
+    subscriptionFeatureList: new FakeElement('ul'),
+    subscriptionFeedback: new FakeElement('p'),
+    upgradeCtaButton: new FakeElement('button'),
     viewFilter: new FakeElement('select'),
     statusFilter: new FakeElement('select'),
     sortFilter: new FakeElement('select'),
     nextBestActionSummary: new FakeElement('p'),
     nextBestActionList: new FakeElement('ul'),
+    nextBestActionLockMessage: new FakeElement('p'),
     onboardingChecklistSummary: new FakeElement('p'),
     onboardingChecklistList: new FakeElement('ul'),
     summary: new FakeElement('p'),
@@ -399,16 +409,32 @@ function makeDashboardHarness({ storedFilters = null } = {}) {
     importJsonButton: new FakeElement('button'),
     importJsonInput: new FakeElement('input'),
     transferFeedback: new FakeElement('p'),
+    form: withForm ? new FakeElement('form') : null,
+    saveOpportunityButton: withForm ? new FakeElement('button') : null,
+    cancelEditButton: withForm ? new FakeElement('button') : null,
   };
+  if (nodes.form) {
+    nodes.form._formValues = { ...formValues };
+    nodes.form.reset = () => {
+      nodes.form._formValues = {};
+    };
+  }
+  nodes.subscriptionFeedback.hidden = true;
+  nodes.nextBestActionLockMessage.hidden = true;
 
   const nodeById = {
     'session-email': nodes.sessionEmail,
     'opportunity-list': nodes.list,
+    'subscription-summary': nodes.subscriptionSummary,
+    'subscription-feature-list': nodes.subscriptionFeatureList,
+    'subscription-feedback': nodes.subscriptionFeedback,
+    'upgrade-cta-button': nodes.upgradeCtaButton,
     'filter-view': nodes.viewFilter,
     'filter-status': nodes.statusFilter,
     'filter-sort': nodes.sortFilter,
     'next-best-action-summary': nodes.nextBestActionSummary,
     'next-best-action-list': nodes.nextBestActionList,
+    'next-best-action-lock-message': nodes.nextBestActionLockMessage,
     'onboarding-checklist-summary': nodes.onboardingChecklistSummary,
     'onboarding-checklist-list': nodes.onboardingChecklistList,
     'filter-summary': nodes.summary,
@@ -421,9 +447,9 @@ function makeDashboardHarness({ storedFilters = null } = {}) {
     'import-json-button': nodes.importJsonButton,
     'import-json-input': nodes.importJsonInput,
     'transfer-feedback': nodes.transferFeedback,
-    'opportunity-form': null,
-    'save-opportunity-button': null,
-    'cancel-edit-button': null,
+    'opportunity-form': nodes.form,
+    'save-opportunity-button': nodes.saveOpportunityButton,
+    'cancel-edit-button': nodes.cancelEditButton,
     'sign-out-button': null,
   };
 
@@ -441,7 +467,7 @@ function makeDashboardHarness({ storedFilters = null } = {}) {
 
   const win = {
     location: {
-      search: '?mockAuth=1',
+      search: '?mockAuth=1&mockPlan=paid',
       replace() {
         throw new Error('replace should not be called in authenticated dashboard test path');
       },
@@ -1203,6 +1229,120 @@ function toggleCardSelection(listNode, cardId, checked = true) {
 
   assert.strictEqual(nodes.importJsonInput.value, '', 'expected import click to clear stale file selection');
   assert.strictEqual(pickerOpenCount, 1, 'expected import click to open file picker');
+})();
+
+(function testDashboardFreePlanCreateSubmitBlockedAtLimit() {
+  const model = loadOpportunityModel();
+  const storage = makeSessionStorage();
+  const userId = 'dev-user';
+  Array.from({ length: 10 }, (_, index) =>
+    model.createOpportunityForUser(userId, { title: `Seed ${index + 1}`, status: 'new' }, { storage })
+  );
+
+  const { win, doc, nodes } = makeDashboardHarness({
+    withForm: true,
+    formValues: {
+      id: '',
+      title: 'Blocked create attempt',
+      type: 'general',
+      source_link: '',
+      contact: '',
+      deadline: '',
+      status: 'new',
+      notes: '',
+      tags: '',
+    },
+  });
+  win.location.search = '?mockAuth=1';
+  let createCalls = 0;
+
+  const { initializeDashboard } = loadDashboardModule({
+    FormData: class FakeFormData {
+      constructor(form) {
+        this.form = form;
+      }
+      get(key) {
+        return this.form && this.form._formValues ? this.form._formValues[key] : '';
+      }
+    },
+    getMockSession: () => ({ userId, email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {},
+    listOpportunitiesForUser: (sessionUserId, options = {}) =>
+      model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+    createOpportunityForUser: (sessionUserId, seed) => {
+      createCalls += 1;
+      return model.createOpportunityForUser(sessionUserId, seed, { storage });
+    },
+    updateOpportunityForUser: (sessionUserId, opportunityId, updates) =>
+      model.updateOpportunityForUser(sessionUserId, opportunityId, updates, { storage }),
+    archiveOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    deleteOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.deleteOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+  nodes.form.trigger('submit');
+
+  assert.strictEqual(createCalls, 0, 'expected create submit path to block at free-tier limit');
+  assert.ok(
+    nodes.subscriptionFeedback.textContent.includes('Free plan supports up to 10 active opportunities'),
+    'expected free-tier limit feedback when create is blocked'
+  );
+})();
+
+(function testDashboardFreePlanExportAndImportHandlersAreHardBlocked() {
+  const model = loadOpportunityModel();
+  const storage = makeSessionStorage();
+  const userId = 'dev-user';
+  model.createOpportunityForUser(userId, { title: 'Baseline', status: 'new' }, { storage });
+
+  const { win, doc, nodes } = makeDashboardHarness();
+  win.location.search = '?mockAuth=1';
+  let createObjectUrlCalls = 0;
+  let pickerOpenCount = 0;
+  win.URL = {
+    createObjectURL() {
+      createObjectUrlCalls += 1;
+      return 'blob:should-not-be-used';
+    },
+    revokeObjectURL() {},
+  };
+  nodes.importJsonInput.click = () => {
+    pickerOpenCount += 1;
+  };
+
+  const { initializeDashboard } = loadDashboardModule({
+    getMockSession: () => ({ userId, email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {},
+    listOpportunitiesForUser: (sessionUserId, options = {}) =>
+      model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+    createOpportunityForUser: (sessionUserId, seed) =>
+      model.createOpportunityForUser(sessionUserId, seed, { storage }),
+    updateOpportunityForUser: (sessionUserId, opportunityId, updates) =>
+      model.updateOpportunityForUser(sessionUserId, opportunityId, updates, { storage }),
+    archiveOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    deleteOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.deleteOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+  nodes.exportJsonButton.trigger('click');
+  assert.strictEqual(createObjectUrlCalls, 0, 'expected free-plan export handler to hard-block blob generation');
+  assert.strictEqual(nodes.transferFeedback.textContent, 'Import/export is available on paid plans.');
+  assert.strictEqual(nodes.transferFeedback.className, 'meta transfer-feedback transfer-feedback--error');
+
+  nodes.importJsonButton.trigger('click');
+  assert.strictEqual(pickerOpenCount, 0, 'expected free-plan import handler to hard-block file picker open');
+  assert.strictEqual(nodes.transferFeedback.textContent, 'Import/export is available on paid plans.');
+  assert.strictEqual(nodes.transferFeedback.className, 'meta transfer-feedback transfer-feedback--error');
 })();
 
 pendingAsyncTests.push(
@@ -2218,6 +2358,173 @@ pendingAsyncTests.push(
   assert.strictEqual(nodes.statusFilter.value, 'in progress');
   assert.deepStrictEqual(renderedCardIds(nodes.list), [alpha.id]);
   assert.strictEqual(nodes.summary.textContent, 'Active: 3 | Archived: 0 | Showing: 1');
+})();
+
+(function testResolveLocalSubscriptionStateFromQuery() {
+  const { resolveLocalSubscriptionState } = loadDashboardModule({});
+  const freeState = resolveLocalSubscriptionState({ location: { search: '?mockAuth=1' } });
+  const paidState = resolveLocalSubscriptionState({ location: { search: '?mockAuth=1&mockPlan=paid' } });
+  const paidWithoutMockAuthState = resolveLocalSubscriptionState({ location: { search: '?mockPlan=paid' } });
+  const unknownState = resolveLocalSubscriptionState({ location: { search: '?mockPlan=enterprise' } });
+
+  assert.strictEqual(freeState.plan, 'free');
+  assert.strictEqual(freeState.isPaid, false);
+  assert.strictEqual(paidState.plan, 'paid');
+  assert.strictEqual(paidState.isPaid, true);
+  assert.strictEqual(paidWithoutMockAuthState.plan, 'free');
+  assert.strictEqual(paidWithoutMockAuthState.isPaid, false);
+  assert.strictEqual(unknownState.plan, 'free');
+})();
+
+(function testBuildSubscriptionBoundaryStateFreeTierCreateBoundaries() {
+  const { buildSubscriptionBoundaryState } = loadDashboardModule({});
+  const nineActive = Array.from({ length: 9 }, (_, index) => ({
+    id: `active-nine-${index + 1}`,
+    archived: false,
+  }));
+  const tenActive = Array.from({ length: 10 }, (_, index) => ({
+    id: `active-ten-${index + 1}`,
+    archived: false,
+  }));
+  const nineAfterArchive = tenActive.map((item, index) => (index === 0 ? { ...item, archived: true } : item));
+
+  const atNine = buildSubscriptionBoundaryState(nineActive, {
+    plan: 'free',
+    isPaid: false,
+    freeOpportunityLimit: 10,
+  });
+  const atTen = buildSubscriptionBoundaryState(tenActive, {
+    plan: 'free',
+    isPaid: false,
+    freeOpportunityLimit: 10,
+  });
+  const afterArchive = buildSubscriptionBoundaryState(nineAfterArchive, {
+    plan: 'free',
+    isPaid: false,
+    freeOpportunityLimit: 10,
+  });
+  const afterDelete = buildSubscriptionBoundaryState(tenActive.slice(1), {
+    plan: 'free',
+    isPaid: false,
+    freeOpportunityLimit: 10,
+  });
+
+  assert.strictEqual(atNine.canCreateOpportunity, true);
+  assert.strictEqual(atTen.canCreateOpportunity, false);
+  assert.strictEqual(afterArchive.canCreateOpportunity, true);
+  assert.strictEqual(afterDelete.canCreateOpportunity, true);
+})();
+
+(function testBuildSubscriptionBoundaryStateFreeLimit() {
+  const { buildSubscriptionBoundaryState } = loadDashboardModule({});
+  const items = Array.from({ length: 10 }, (_, index) => ({
+    id: `active-${index + 1}`,
+    archived: false,
+  }));
+  items.push({ id: 'archived-1', archived: true });
+
+  const boundary = buildSubscriptionBoundaryState(items, {
+    plan: 'free',
+    isPaid: false,
+    freeOpportunityLimit: 10,
+  });
+
+  assert.strictEqual(boundary.activeOpportunityCount, 10);
+  assert.strictEqual(boundary.remainingFreeSlots, 0);
+  assert.strictEqual(boundary.canCreateOpportunity, false);
+  assert.strictEqual(boundary.isNextBestActionsLocked, true);
+})();
+
+(function testDashboardFreePlanLocksPaidSurfaces() {
+  const model = loadOpportunityModel();
+  const storage = makeSessionStorage();
+  const userId = 'dev-user';
+
+  const created = model.createOpportunityForUser(userId, { title: 'First', status: 'new' }, { storage });
+  const { win, doc, nodes } = makeDashboardHarness();
+  win.location.search = '?mockAuth=1';
+
+  const { initializeDashboard } = loadDashboardModule({
+    getMockSession: () => ({ userId, email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {},
+    listOpportunitiesForUser: (sessionUserId, options = {}) =>
+      model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+    createOpportunityForUser: (sessionUserId, seed) =>
+      model.createOpportunityForUser(sessionUserId, seed, { storage }),
+    updateOpportunityForUser: (sessionUserId, opportunityId, updates) =>
+      model.updateOpportunityForUser(sessionUserId, opportunityId, updates, { storage }),
+    archiveOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    deleteOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.deleteOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+
+  assert.strictEqual(nodes.nextBestActionSummary.textContent, 'Locked on free plan.');
+  assert.strictEqual(nodes.nextBestActionLockMessage.hidden, false);
+  assert.strictEqual(nodes.exportJsonButton.disabled, true);
+  assert.strictEqual(nodes.importJsonButton.disabled, true);
+  assert.strictEqual(nodes.upgradeCtaButton.disabled, false);
+  assert.ok(nodes.subscriptionSummary.textContent.includes('Free plan'));
+  assert.ok(
+    nodes.subscriptionFeatureList.children.some(
+      (node) => node.textContent.includes('Price:')
+    ),
+    'expected monthly price row in subscription features'
+  );
+  assert.ok(
+    nodes.subscriptionFeatureList.children.some(
+      (node) => node.textContent.includes('Founder Lifetime') && node.textContent.includes('first 50 founders')
+    ),
+    'expected founder lifetime row in subscription features'
+  );
+  const renderedCard = findRenderedCard(nodes.list, created.id);
+  const selectionInput = findFirstNode(
+    renderedCard,
+    (node) => node && node.tagName === 'input' && node.dataset && node.dataset.bulkSelect
+  );
+  assert.strictEqual(selectionInput, null, 'expected free plan cards to hide bulk selection checkboxes');
+})();
+
+(function testDashboardPaidPlanUnlocksPaidSurfaces() {
+  const model = loadOpportunityModel();
+  const storage = makeSessionStorage();
+  const userId = 'dev-user';
+
+  model.createOpportunityForUser(userId, { title: 'First', status: 'new' }, { storage });
+  const { win, doc, nodes } = makeDashboardHarness();
+  win.location.search = '?mockAuth=1&mockPlan=paid';
+
+  const { initializeDashboard } = loadDashboardModule({
+    getMockSession: () => ({ userId, email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {},
+    listOpportunitiesForUser: (sessionUserId, options = {}) =>
+      model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+    createOpportunityForUser: (sessionUserId, seed) =>
+      model.createOpportunityForUser(sessionUserId, seed, { storage }),
+    updateOpportunityForUser: (sessionUserId, opportunityId, updates) =>
+      model.updateOpportunityForUser(sessionUserId, opportunityId, updates, { storage }),
+    archiveOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    deleteOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.deleteOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+
+  assert.notStrictEqual(nodes.nextBestActionSummary.textContent, 'Locked on free plan.');
+  assert.strictEqual(nodes.nextBestActionLockMessage.hidden, true);
+  assert.strictEqual(nodes.exportJsonButton.disabled, false);
+  assert.strictEqual(nodes.importJsonButton.disabled, false);
+  assert.strictEqual(nodes.upgradeCtaButton.disabled, true);
+  assert.ok(nodes.subscriptionSummary.textContent.includes('Paid plan active'));
 })();
 
 (function testOpportunityModelCrud() {

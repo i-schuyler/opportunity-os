@@ -94,6 +94,27 @@ textarea {
   background: #f9fafb;
 }
 
+.subscription-boundary {
+  border-color: #bbf7d0;
+}
+
+.subscription-feature-list {
+  margin: 0.75rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.subscription-feature-list li + li {
+  margin-top: 0.35rem;
+}
+
+.subscription-feedback {
+  margin-top: 0.65rem;
+}
+
+.subscription-feedback--error {
+  color: #991b1b;
+}
+
 .next-best-action-list {
   margin: 0.65rem 0 0;
   padding-left: 1.1rem;
@@ -101,6 +122,10 @@ textarea {
 
 .next-best-action-list li + li {
   margin-top: 0.4rem;
+}
+
+#next-best-action-lock-message {
+  margin-top: 0.55rem;
 }
 
 .onboarding-checklist-list {

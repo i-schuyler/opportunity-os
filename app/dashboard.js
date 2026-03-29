@@ -28,6 +28,48 @@ const DEFAULT_DASHBOARD_FILTERS = {
   status: 'all',
   sort: SORT_MODE_NEAREST_DEADLINE,
 };
+const SUBSCRIPTION_PLAN_FREE = 'free';
+const SUBSCRIPTION_PLAN_PAID = 'paid';
+const FREE_TIER_OPPORTUNITY_LIMIT = 10;
+
+function normalizeSubscriptionPlan(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === SUBSCRIPTION_PLAN_PAID ? SUBSCRIPTION_PLAN_PAID : SUBSCRIPTION_PLAN_FREE;
+}
+
+export function resolveLocalSubscriptionState(win = window) {
+  const params = new URLSearchParams((win && win.location && win.location.search) || '');
+  const isMockModeEnabled =
+    params.get('mockAuth') === '1' || Boolean(win && win.OPPORTUNITY_OS_ENABLE_MOCK_AUTH === true);
+  const plan = isMockModeEnabled ? normalizeSubscriptionPlan(params.get('mockPlan')) : SUBSCRIPTION_PLAN_FREE;
+  const isPaid = plan === SUBSCRIPTION_PLAN_PAID;
+
+  return {
+    plan,
+    isPaid,
+    freeOpportunityLimit: FREE_TIER_OPPORTUNITY_LIMIT,
+  };
+}
+
+export function buildSubscriptionBoundaryState(allItems = [], subscriptionState = resolveLocalSubscriptionState()) {
+  const safeItems = Array.isArray(allItems) ? allItems : [];
+  const activeOpportunityCount = safeItems.filter((item) => !item.archived).length;
+  const isPaid = Boolean(subscriptionState && subscriptionState.isPaid);
+  const freeOpportunityLimit = Number(subscriptionState && subscriptionState.freeOpportunityLimit) || FREE_TIER_OPPORTUNITY_LIMIT;
+  const remainingFreeSlots = Math.max(0, freeOpportunityLimit - activeOpportunityCount);
+
+  return {
+    plan: isPaid ? SUBSCRIPTION_PLAN_PAID : SUBSCRIPTION_PLAN_FREE,
+    isPaid,
+    activeOpportunityCount,
+    freeOpportunityLimit,
+    remainingFreeSlots,
+    canCreateOpportunity: isPaid || activeOpportunityCount < freeOpportunityLimit,
+    isNextBestActionsLocked: !isPaid,
+    isImportExportLocked: !isPaid,
+    isBulkActionsLocked: !isPaid,
+  };
+}
 
 function withCurrentSearch(path, win = window) {
   return `${path}${win.location.search || ''}`;
@@ -1024,11 +1066,16 @@ export function initializeDashboard(win = window, doc = document) {
 
   const emailNode = doc.getElementById('session-email');
   const listNode = doc.getElementById('opportunity-list');
+  const subscriptionSummaryNode = doc.getElementById('subscription-summary');
+  const subscriptionFeatureListNode = doc.getElementById('subscription-feature-list');
+  const subscriptionFeedbackNode = doc.getElementById('subscription-feedback');
+  const upgradeCtaButton = doc.getElementById('upgrade-cta-button');
   const viewFilterNode = doc.getElementById('filter-view');
   const statusFilterNode = doc.getElementById('filter-status');
   const sortFilterNode = doc.getElementById('filter-sort');
   const nextBestActionSummaryNode = doc.getElementById('next-best-action-summary');
   const nextBestActionListNode = doc.getElementById('next-best-action-list');
+  const nextBestActionLockMessageNode = doc.getElementById('next-best-action-lock-message');
   const onboardingChecklistSummaryNode = doc.getElementById('onboarding-checklist-summary');
   const onboardingChecklistListNode = doc.getElementById('onboarding-checklist-list');
   const summaryNode = doc.getElementById('filter-summary');
@@ -1046,6 +1093,7 @@ export function initializeDashboard(win = window, doc = document) {
   const cancelEditButton = doc.getElementById('cancel-edit-button');
   const signOutButton = doc.getElementById('sign-out-button');
   const filterState = readDashboardFilters(win);
+  const subscriptionState = resolveLocalSubscriptionState(win);
   const selectedIds = new Set();
   let visibleIds = [];
 
@@ -1064,13 +1112,77 @@ export function initializeDashboard(win = window, doc = document) {
     transferFeedbackNode.className = isError ? 'meta transfer-feedback transfer-feedback--error' : 'meta transfer-feedback';
   }
 
-  function renderNextBestActions(allItems = []) {
+  function setSubscriptionFeedback(message, isError = false) {
+    if (!subscriptionFeedbackNode) {
+      return;
+    }
+
+    const normalizedMessage = String(message || '').trim();
+    subscriptionFeedbackNode.textContent = normalizedMessage;
+    subscriptionFeedbackNode.hidden = normalizedMessage.length < 1;
+    subscriptionFeedbackNode.className = isError ? 'meta subscription-feedback subscription-feedback--error' : 'meta subscription-feedback';
+  }
+
+  function renderSubscriptionBoundary(boundaryState) {
+    if (subscriptionSummaryNode) {
+      if (boundaryState.isPaid) {
+        subscriptionSummaryNode.textContent = `Paid plan active. Unlimited opportunities and premium tools are available.`;
+      } else if (boundaryState.canCreateOpportunity) {
+        subscriptionSummaryNode.textContent = `Free plan: ${boundaryState.activeOpportunityCount}/${boundaryState.freeOpportunityLimit} active opportunities used.`;
+      } else {
+        subscriptionSummaryNode.textContent = `Free plan limit reached (${boundaryState.freeOpportunityLimit} active opportunities). Upgrade to keep adding more.`;
+      }
+    }
+
+    if (subscriptionFeatureListNode) {
+      subscriptionFeatureListNode.replaceChildren();
+      const lines = [
+        `Free: up to ${boundaryState.freeOpportunityLimit} opportunities and core dashboard access`,
+        'Paid: unlimited opportunities, import/export, bulk actions, and next best actions panel',
+        'Price: $9/month',
+        'Founder Lifetime $79 (first 50 founders)',
+      ];
+
+      lines.forEach((line) => {
+        const itemNode = doc.createElement('li');
+        itemNode.textContent = line;
+        subscriptionFeatureListNode.append(itemNode);
+      });
+    }
+
+    if (upgradeCtaButton) {
+      upgradeCtaButton.disabled = boundaryState.isPaid;
+      upgradeCtaButton.textContent = boundaryState.isPaid ? 'Paid plan active' : 'Upgrade to paid';
+    }
+  }
+
+  function renderNextBestActions(allItems = [], boundaryState) {
     if (!nextBestActionListNode) {
       return;
     }
 
-    const suggestions = buildNextBestActions(allItems);
     nextBestActionListNode.replaceChildren();
+    const isLocked = Boolean(boundaryState && boundaryState.isNextBestActionsLocked);
+
+    if (nextBestActionLockMessageNode) {
+      nextBestActionLockMessageNode.hidden = !isLocked;
+      nextBestActionLockMessageNode.textContent = isLocked
+        ? 'Next best actions is a paid feature. Upgrade to unlock guided follow-up.'
+        : '';
+    }
+
+    if (isLocked) {
+      const lockedItem = doc.createElement('li');
+      lockedItem.className = 'meta';
+      lockedItem.textContent = 'Upgrade to paid to view next best actions.';
+      nextBestActionListNode.append(lockedItem);
+      if (nextBestActionSummaryNode) {
+        nextBestActionSummaryNode.textContent = 'Locked on free plan.';
+      }
+      return;
+    }
+
+    const suggestions = buildNextBestActions(allItems);
 
     if (suggestions.length < 1) {
       const fallback = doc.createElement('li');
@@ -1134,7 +1246,9 @@ export function initializeDashboard(win = window, doc = document) {
     }
 
     const allItems = listOpportunitiesForUser(session.userId, { includeArchived: true });
-    renderNextBestActions(allItems);
+    const boundaryState = buildSubscriptionBoundaryState(allItems, subscriptionState);
+    renderSubscriptionBoundary(boundaryState);
+    renderNextBestActions(allItems, boundaryState);
     renderOnboardingChecklist(allItems);
     const activeCount = allItems.filter((item) => !item.archived).length;
     const archivedCount = allItems.length - activeCount;
@@ -1208,19 +1322,28 @@ export function initializeDashboard(win = window, doc = document) {
     }
 
     if (bulkActionsNode) {
-      bulkActionsNode.hidden = selectedCount < 1;
+      bulkActionsNode.hidden = boundaryState.isBulkActionsLocked || selectedCount < 1;
     }
     if (selectedSummaryNode) {
       selectedSummaryNode.textContent = `${selectedCount} selected`;
     }
     if (bulkArchiveButton) {
-      bulkArchiveButton.disabled = selectedCount < 1 || isArchivedView;
+      bulkArchiveButton.disabled = boundaryState.isBulkActionsLocked || selectedCount < 1 || isArchivedView;
     }
     if (bulkStatusApplyButton) {
-      bulkStatusApplyButton.disabled = selectedCount < 1;
+      bulkStatusApplyButton.disabled = boundaryState.isBulkActionsLocked || selectedCount < 1;
     }
     if (bulkStatusSelect && selectedCount < 1) {
       bulkStatusSelect.value = '';
+    }
+    if (bulkStatusSelect) {
+      bulkStatusSelect.disabled = boundaryState.isBulkActionsLocked;
+    }
+    if (exportJsonButton) {
+      exportJsonButton.disabled = boundaryState.isImportExportLocked;
+    }
+    if (importJsonButton) {
+      importJsonButton.disabled = boundaryState.isImportExportLocked;
     }
 
     if (sortedItems.length === 0) {
@@ -1242,7 +1365,7 @@ export function initializeDashboard(win = window, doc = document) {
       sortedItems.forEach((item) => {
         listNode.append(
           buildCard(item, doc, {
-            showSelection: true,
+            showSelection: !boundaryState.isBulkActionsLocked,
             isSelected: selectedIds.has(item.id),
           })
         );
@@ -1303,9 +1426,19 @@ export function initializeDashboard(win = window, doc = document) {
       if (id) {
         updateOpportunityForUser(session.userId, id, payload);
       } else {
+        const currentItems = listOpportunitiesForUser(session.userId, { includeArchived: true });
+        const boundaryState = buildSubscriptionBoundaryState(currentItems, subscriptionState);
+        if (!boundaryState.canCreateOpportunity) {
+          setSubscriptionFeedback(
+            `Free plan supports up to ${boundaryState.freeOpportunityLimit} active opportunities. Upgrade to paid for unlimited opportunities.`,
+            false
+          );
+          return;
+        }
         createOpportunityForUser(session.userId, payload);
       }
 
+      setSubscriptionFeedback('');
       resetForm(form, cancelEditButton, saveButton);
       renderList();
     });
@@ -1407,6 +1540,15 @@ export function initializeDashboard(win = window, doc = document) {
   attachActionHandler(listNode);
 
   function applyBulkArchive() {
+    const boundaryState = buildSubscriptionBoundaryState(
+      listOpportunitiesForUser(session.userId, { includeArchived: true }),
+      subscriptionState
+    );
+    if (boundaryState.isBulkActionsLocked) {
+      setSubscriptionFeedback('Bulk actions are available on paid plans.');
+      return;
+    }
+
     if (filterState.view === 'archived') {
       return;
     }
@@ -1428,6 +1570,15 @@ export function initializeDashboard(win = window, doc = document) {
   }
 
   function applyBulkStatus(nextStatus) {
+    const boundaryState = buildSubscriptionBoundaryState(
+      listOpportunitiesForUser(session.userId, { includeArchived: true }),
+      subscriptionState
+    );
+    if (boundaryState.isBulkActionsLocked) {
+      setSubscriptionFeedback('Bulk actions are available on paid plans.');
+      return;
+    }
+
     const normalizedStatus = String(nextStatus || '').trim();
     if (!normalizedStatus) {
       return;
@@ -1466,6 +1617,15 @@ export function initializeDashboard(win = window, doc = document) {
 
   if (exportJsonButton) {
     exportJsonButton.addEventListener('click', () => {
+      const boundaryState = buildSubscriptionBoundaryState(
+        listOpportunitiesForUser(session.userId, { includeArchived: true }),
+        subscriptionState
+      );
+      if (boundaryState.isImportExportLocked) {
+        setTransferFeedback('Import/export is available on paid plans.', true);
+        return;
+      }
+
       const userItems = listOpportunitiesForUser(session.userId, { includeArchived: true });
       const payload = buildOpportunityExportPayload(userItems);
       const didDownload = triggerJsonDownload(payload, win, doc);
@@ -1479,6 +1639,15 @@ export function initializeDashboard(win = window, doc = document) {
 
   if (importJsonButton && importJsonInput) {
     importJsonButton.addEventListener('click', () => {
+      const boundaryState = buildSubscriptionBoundaryState(
+        listOpportunitiesForUser(session.userId, { includeArchived: true }),
+        subscriptionState
+      );
+      if (boundaryState.isImportExportLocked) {
+        setTransferFeedback('Import/export is available on paid plans.', true);
+        return;
+      }
+
       importJsonInput.value = '';
       importJsonInput.click();
     });
@@ -1491,6 +1660,14 @@ export function initializeDashboard(win = window, doc = document) {
 
       try {
         const rawJson = await file.text();
+        const boundaryState = buildSubscriptionBoundaryState(
+          listOpportunitiesForUser(session.userId, { includeArchived: true }),
+          subscriptionState
+        );
+        if (boundaryState.isImportExportLocked) {
+          setTransferFeedback('Import/export is available on paid plans.', true);
+          return;
+        }
         const parsed = parseOpportunityImportPayload(rawJson);
         const importedCount = mergeImportedOpportunitiesForUser(session.userId, parsed.opportunities);
         renderList();
@@ -1507,6 +1684,22 @@ export function initializeDashboard(win = window, doc = document) {
         );
       } finally {
         importJsonInput.value = '';
+      }
+    });
+  }
+
+  if (upgradeCtaButton) {
+    upgradeCtaButton.addEventListener('click', () => {
+      const boundaryState = buildSubscriptionBoundaryState(
+        listOpportunitiesForUser(session.userId, { includeArchived: true }),
+        subscriptionState
+      );
+      if (boundaryState.isPaid) {
+        setSubscriptionFeedback('Paid plan is already active.');
+      } else {
+        setSubscriptionFeedback(
+          'Upgrade flow is not wired yet. Local mock mode only: use ?mockAuth=1&mockPlan=paid to preview paid surfaces.'
+        );
       }
     });
   }
