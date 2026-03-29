@@ -94,6 +94,15 @@ textarea {
   background: #f9fafb;
 }
 
+.next-best-action-list {
+  margin: 0.65rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.next-best-action-list li + li {
+  margin-top: 0.4rem;
+}
+
 .empty-state {
   margin: 0;
 }

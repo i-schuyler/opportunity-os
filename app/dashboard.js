@@ -20,6 +20,7 @@ const DASHBOARD_SORT_MODES = new Set([
 const QUICK_STATUS_VALUES = ['new', 'in progress', 'waiting', 'done'];
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const NOTES_PREVIEW_MAX_LENGTH = 140;
+const NEXT_BEST_ACTIONS_LIMIT = 3;
 const SAMPLE_DATA_DEADLINE_SOON_DAYS = 3;
 const SAMPLE_DATA_DEADLINE_UPCOMING_DAYS = 21;
 const DEFAULT_DASHBOARD_FILTERS = {
@@ -568,6 +569,113 @@ function normalizeDeadline(value) {
   return parsed;
 }
 
+function getNextBestActionPriority(reasonKey) {
+  if (reasonKey === 'overdue') {
+    return 0;
+  }
+  if (reasonKey === 'due_soon') {
+    return 1;
+  }
+  if (reasonKey === 'new') {
+    return 2;
+  }
+  return 3;
+}
+
+function getNextBestActionReason(item, now = Date.now()) {
+  const status = normalizeStatusValue(item.status);
+  if (status === 'done') {
+    return null;
+  }
+
+  const urgency = classifyDeadlineUrgency(item.deadline, now);
+  if (urgency === 'overdue') {
+    return {
+      key: 'overdue',
+      message: 'Deadline passed. Send a quick follow-up or update the status.',
+    };
+  }
+
+  if (urgency === 'due_soon') {
+    return {
+      key: 'due_soon',
+      message: 'Due soon. Confirm the next step today.',
+    };
+  }
+
+  if (status === 'new') {
+    return {
+      key: 'new',
+      message: 'Still marked new. Take one first step to keep momentum.',
+    };
+  }
+
+  if (status === 'waiting' && urgency !== 'overdue' && urgency !== 'due_soon') {
+    return {
+      key: 'waiting',
+      message: 'Waiting without a near-term deadline. Add a check-in date or note.',
+    };
+  }
+
+  return null;
+}
+
+export function buildNextBestActions(items = [], now = Date.now()) {
+  return items
+    .filter((item) => !item.archived)
+    .map((item, index) => {
+      const reason = getNextBestActionReason(item, now);
+      if (!reason) {
+        return null;
+      }
+
+      return {
+        id: item.id,
+        title: String(item.title || '').trim() || 'Untitled opportunity',
+        reasonKey: reason.key,
+        message: reason.message,
+        deadline: String(item.deadline || '').trim(),
+        index,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      const reasonDelta = getNextBestActionPriority(a.reasonKey) - getNextBestActionPriority(b.reasonKey);
+      if (reasonDelta !== 0) {
+        return reasonDelta;
+      }
+
+      const aDeadline = normalizeDeadline(a.deadline);
+      const bDeadline = normalizeDeadline(b.deadline);
+      if (aDeadline < bDeadline) {
+        return -1;
+      }
+      if (aDeadline > bDeadline) {
+        return 1;
+      }
+
+      const titleDelta = a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
+      if (titleDelta !== 0) {
+        return titleDelta;
+      }
+
+      const idDelta = String(a.id || '').localeCompare(String(b.id || ''), undefined, { sensitivity: 'base' });
+      if (idDelta !== 0) {
+        return idDelta;
+      }
+
+      return a.index - b.index;
+    })
+    .slice(0, NEXT_BEST_ACTIONS_LIMIT)
+    .map((item) => ({
+      id: item.id,
+      title: item.title,
+      reasonKey: item.reasonKey,
+      message: item.message,
+      deadline: item.deadline,
+    }));
+}
+
 export function sortOpportunityItems(items = [], sortMode = SORT_MODE_NEAREST_DEADLINE) {
   const normalizedSortMode = DASHBOARD_SORT_MODES.has(sortMode)
     ? sortMode
@@ -861,6 +969,8 @@ export function initializeDashboard(win = window, doc = document) {
   const viewFilterNode = doc.getElementById('filter-view');
   const statusFilterNode = doc.getElementById('filter-status');
   const sortFilterNode = doc.getElementById('filter-sort');
+  const nextBestActionSummaryNode = doc.getElementById('next-best-action-summary');
+  const nextBestActionListNode = doc.getElementById('next-best-action-list');
   const summaryNode = doc.getElementById('filter-summary');
   const bulkActionsNode = doc.getElementById('bulk-actions');
   const selectedSummaryNode = doc.getElementById('selected-summary');
@@ -894,12 +1004,43 @@ export function initializeDashboard(win = window, doc = document) {
     transferFeedbackNode.className = isError ? 'meta transfer-feedback transfer-feedback--error' : 'meta transfer-feedback';
   }
 
+  function renderNextBestActions(allItems = []) {
+    if (!nextBestActionListNode) {
+      return;
+    }
+
+    const suggestions = buildNextBestActions(allItems);
+    nextBestActionListNode.replaceChildren();
+
+    if (suggestions.length < 1) {
+      const fallback = doc.createElement('li');
+      fallback.className = 'meta';
+      fallback.textContent = 'No urgent follow-up needed right now. Keep your list current and check back soon.';
+      nextBestActionListNode.append(fallback);
+      if (nextBestActionSummaryNode) {
+        nextBestActionSummaryNode.textContent = 'You are caught up for now.';
+      }
+      return;
+    }
+
+    suggestions.forEach((suggestion) => {
+      const itemNode = doc.createElement('li');
+      itemNode.textContent = `${suggestion.title}: ${suggestion.message}`;
+      nextBestActionListNode.append(itemNode);
+    });
+
+    if (nextBestActionSummaryNode) {
+      nextBestActionSummaryNode.textContent = `Showing ${suggestions.length} practical actions to review next.`;
+    }
+  }
+
   function renderList() {
     if (!listNode) {
       return;
     }
 
     const allItems = listOpportunitiesForUser(session.userId, { includeArchived: true });
+    renderNextBestActions(allItems);
     const activeCount = allItems.filter((item) => !item.archived).length;
     const archivedCount = allItems.length - activeCount;
     const statusOptions = deriveStatusOptions(allItems);
