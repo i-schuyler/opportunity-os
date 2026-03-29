@@ -27,3 +27,4 @@
 - [TENTATIVE] Dashboard bulk-status options are derived from quick-status defaults (`new`, `in progress`, `waiting`, `done`) plus statuses present in user data.
 - [TENTATIVE] In archived view, bulk archive stays disabled/no-op while bulk status changes remain allowed for selected archived items.
 - [TENTATIVE] Dashboard JSON import merges opportunities into existing user data (append behavior) rather than replacing stored records.
+- [TENTATIVE] Dashboard onboarding checklist progress is derived from local opportunity fields: any opportunity exists, any notes/contact exists, any valid deadline exists, any non-`new` status exists, and at least one active opportunity exists (used as the proxy for reviewing next best actions).

@@ -532,6 +532,96 @@ export function deriveBulkStatusOptions(items = []) {
   return statuses;
 }
 
+export function deriveDashboardChecklistState(items = []) {
+  const normalizedItems = Array.isArray(items) ? items : [];
+
+  const checklistItems = [
+    {
+      id: 'first-opportunity',
+      label: 'Add your first opportunity',
+      completed: normalizedItems.length > 0,
+    },
+    {
+      id: 'notes-or-contact',
+      label: 'Add notes or contact info to an opportunity',
+      completed: normalizedItems.some((item) => {
+        const notes = String(item.notes || '').trim();
+        const contact = String(item.contact || '').trim();
+        return Boolean(notes || contact);
+      }),
+    },
+    {
+      id: 'deadline-set',
+      label: 'Set a deadline',
+      completed: normalizedItems.some((item) => {
+        const deadline = String(item.deadline || '').trim();
+        return Boolean(deadline) && classifyDeadlineUrgency(deadline) !== 'no_deadline';
+      }),
+    },
+    {
+      id: 'status-updated',
+      label: 'Update a status',
+      completed: normalizedItems.some((item) => {
+        const normalizedStatus = normalizeStatusValue(item.status);
+        return normalizedStatus && normalizedStatus !== 'new';
+      }),
+    },
+    {
+      id: 'review-next-actions',
+      label: 'Review next best actions',
+      completed: normalizedItems.some((item) => !item.archived),
+    },
+  ];
+
+  const completedCount = checklistItems.filter((item) => item.completed).length;
+
+  return {
+    completedCount,
+    totalCount: checklistItems.length,
+    items: checklistItems,
+  };
+}
+
+function renderDashboardChecklist(targetNode, doc, checklistState) {
+  if (!targetNode) {
+    return;
+  }
+
+  targetNode.replaceChildren();
+
+  const title = doc.createElement('p');
+  title.className = 'dashboard-checklist__title';
+  title.textContent = 'Progress checklist';
+
+  const progress = doc.createElement('p');
+  progress.className = 'meta';
+  progress.textContent = `${checklistState.completedCount} of ${checklistState.totalCount} complete`;
+
+  const list = doc.createElement('ul');
+  list.className = 'dashboard-checklist__items';
+
+  checklistState.items.forEach((item) => {
+    const row = doc.createElement('li');
+    row.className = item.completed
+      ? 'dashboard-checklist__item dashboard-checklist__item--complete'
+      : 'dashboard-checklist__item';
+    row.dataset.checklistId = item.id;
+
+    const marker = doc.createElement('span');
+    marker.className = 'dashboard-checklist__marker';
+    marker.textContent = item.completed ? 'Done' : 'Pending';
+
+    const text = doc.createElement('span');
+    text.className = 'dashboard-checklist__text';
+    text.textContent = item.label;
+
+    row.append(marker, text);
+    list.append(row);
+  });
+
+  targetNode.append(title, progress, list);
+}
+
 export function filterOpportunityItems(items = [], filters = DEFAULT_DASHBOARD_FILTERS) {
   const normalizedFilters = normalizeDashboardFilters(filters);
 
@@ -862,6 +952,7 @@ export function initializeDashboard(win = window, doc = document) {
   const statusFilterNode = doc.getElementById('filter-status');
   const sortFilterNode = doc.getElementById('filter-sort');
   const summaryNode = doc.getElementById('filter-summary');
+  const checklistNode = doc.getElementById('dashboard-checklist');
   const bulkActionsNode = doc.getElementById('bulk-actions');
   const selectedSummaryNode = doc.getElementById('selected-summary');
   const bulkArchiveButton = doc.getElementById('bulk-archive-button');
@@ -902,6 +993,7 @@ export function initializeDashboard(win = window, doc = document) {
     const allItems = listOpportunitiesForUser(session.userId, { includeArchived: true });
     const activeCount = allItems.filter((item) => !item.archived).length;
     const archivedCount = allItems.length - activeCount;
+    const checklistState = deriveDashboardChecklistState(allItems);
     const statusOptions = deriveStatusOptions(allItems);
     const bulkStatusOptions = deriveBulkStatusOptions(allItems);
     const isArchivedView = filterState.view === 'archived';
@@ -970,6 +1062,8 @@ export function initializeDashboard(win = window, doc = document) {
     if (summaryNode) {
       summaryNode.textContent = `Active: ${activeCount} | Archived: ${archivedCount} | Showing: ${sortedItems.length}`;
     }
+
+    renderDashboardChecklist(checklistNode, doc, checklistState);
 
     if (bulkActionsNode) {
       bulkActionsNode.hidden = selectedCount < 1;

@@ -420,6 +420,62 @@ textarea {
   margin-top: 0.35rem;
 }
 
+.dashboard-checklist {
+  background: #f9fafb;
+  border: 1px solid #d1d5db;
+  border-radius: 10px;
+  margin-top: 0.65rem;
+  padding: 0.65rem 0.75rem;
+}
+
+.dashboard-checklist__title {
+  color: #1f2937;
+  font-size: 0.88rem;
+  font-weight: 700;
+  margin: 0 0 0.2rem;
+}
+
+.dashboard-checklist__items {
+  display: grid;
+  gap: 0.3rem;
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+}
+
+.dashboard-checklist__item {
+  align-items: center;
+  color: #374151;
+  display: flex;
+  gap: 0.45rem;
+  line-height: 1.3;
+}
+
+.dashboard-checklist__item--complete .dashboard-checklist__text {
+  color: #166534;
+}
+
+.dashboard-checklist__marker {
+  border: 1px solid #d1d5db;
+  border-radius: 999px;
+  color: #6b7280;
+  font-size: 0.72rem;
+  font-weight: 700;
+  min-width: 60px;
+  padding: 0.08rem 0.45rem;
+  text-align: center;
+}
+
+.dashboard-checklist__item--complete .dashboard-checklist__marker {
+  background: #ecfdf3;
+  border-color: #86efac;
+  color: #166534;
+}
+
+.dashboard-checklist__text {
+  font-size: 0.9rem;
+}
+
 .transfer-feedback--error {
   color: #991b1b;
 }

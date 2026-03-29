@@ -75,7 +75,7 @@ function loadDashboardModule(mocks) {
     '\n'
   );
   source +=
-    '\nmodule.exports = { initializeDashboard, buildCard, buildSampleOpportunitySeeds, normalizeSafeSourceLink, normalizeDashboardFilters, deriveStatusOptions, deriveBulkStatusOptions, filterOpportunityItems, sortOpportunityItems, classifyDeadlineUrgency, buildOpportunityExportPayload, parseOpportunityImportPayload, mergeImportedOpportunitiesForUser };\n';
+    '\nmodule.exports = { initializeDashboard, buildCard, buildSampleOpportunitySeeds, normalizeSafeSourceLink, normalizeDashboardFilters, deriveStatusOptions, deriveBulkStatusOptions, deriveDashboardChecklistState, filterOpportunityItems, sortOpportunityItems, classifyDeadlineUrgency, buildOpportunityExportPayload, parseOpportunityImportPayload, mergeImportedOpportunitiesForUser };\n';
 
   const context = {
     ...mocks,
@@ -386,6 +386,7 @@ function makeDashboardHarness({ storedFilters = null } = {}) {
     statusFilter: new FakeElement('select'),
     sortFilter: new FakeElement('select'),
     summary: new FakeElement('p'),
+    checklist: new FakeElement('section'),
     bulkActions: new FakeElement('div'),
     selectedSummary: new FakeElement('p'),
     bulkArchiveButton: new FakeElement('button'),
@@ -404,6 +405,7 @@ function makeDashboardHarness({ storedFilters = null } = {}) {
     'filter-status': nodes.statusFilter,
     'filter-sort': nodes.sortFilter,
     'filter-summary': nodes.summary,
+    'dashboard-checklist': nodes.checklist,
     'bulk-actions': nodes.bulkActions,
     'selected-summary': nodes.selectedSummary,
     'bulk-archive-button': nodes.bulkArchiveButton,
@@ -722,6 +724,34 @@ function toggleCardSelection(listNode, cardId, checked = true) {
   assert.ok(sampleButton, 'expected sample-data action in first-run empty state');
 })();
 
+(function testDashboardChecklistRendersSensibleIncompleteState() {
+  const { win, doc, nodes } = makeDashboardHarness();
+
+  const { initializeDashboard } = loadDashboardModule({
+    getMockSession: () => ({ userId: 'dev-user', email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {},
+    listOpportunitiesForUser: () => [],
+    createOpportunityForUser: () => {},
+    updateOpportunityForUser: () => {},
+    archiveOpportunityForUser: () => {},
+    deleteOpportunityForUser: () => {},
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+
+  assert.ok(
+    nodes.checklist.textContent.includes('Progress checklist'),
+    'expected checklist heading in dashboard UI'
+  );
+  assert.ok(
+    nodes.checklist.textContent.includes('0 of 5 complete'),
+    'expected empty dashboard checklist progress'
+  );
+})();
+
 (function testDashboardSampleDataActionPopulatesAndRenders() {
   const model = loadOpportunityModel();
   const storage = makeSessionStorage();
@@ -766,6 +796,10 @@ function toggleCardSelection(listNode, cardId, checked = true) {
 
   assert.strictEqual(renderedCardIds(nodes.list).length, 3, 'expected active sample records in active view');
   assert.strictEqual(nodes.summary.textContent, 'Active: 3 | Archived: 1 | Showing: 3');
+  assert.ok(
+    nodes.checklist.textContent.includes('5 of 5 complete'),
+    'expected sample data to produce complete checklist progress'
+  );
 
   const renderedStatuses = Array.from(
     nodes.statusFilter.children
@@ -900,6 +934,62 @@ function toggleCardSelection(listNode, cardId, checked = true) {
   );
 
   assert.deepStrictEqual(statuses, ['new', 'in progress', 'waiting', 'done', 'applied', 'interviewing']);
+})();
+
+(function testDeriveDashboardChecklistStateIncompleteDefaults() {
+  const { deriveDashboardChecklistState } = loadDashboardModule({});
+  const checklist = deriveDashboardChecklistState([]);
+
+  assert.strictEqual(checklist.completedCount, 0);
+  assert.strictEqual(checklist.totalCount, 5);
+  assert.deepStrictEqual(Array.from(checklist.items, (item) => item.id), [
+    'first-opportunity',
+    'notes-or-contact',
+    'deadline-set',
+    'status-updated',
+    'review-next-actions',
+  ]);
+  assert.deepStrictEqual(
+    Array.from(checklist.items, (item) => item.completed),
+    [false, false, false, false, false]
+  );
+})();
+
+(function testDeriveDashboardChecklistStateMarksCompletedFromData() {
+  const { deriveDashboardChecklistState } = loadDashboardModule({});
+  const checklist = deriveDashboardChecklistState([
+    {
+      archived: false,
+      notes: 'Captured a follow-up note',
+      contact: '',
+      deadline: '2026-04-15',
+      status: 'in progress',
+    },
+  ]);
+
+  assert.strictEqual(checklist.completedCount, 5);
+  assert.strictEqual(
+    checklist.items.every((item) => item.completed),
+    true,
+    'expected all checklist items complete for a fully populated active opportunity'
+  );
+})();
+
+(function testDeriveDashboardChecklistStateIsDeterministic() {
+  const { deriveDashboardChecklistState } = loadDashboardModule({});
+  const itemsA = [
+    { archived: true, notes: '', contact: '', deadline: '', status: 'new' },
+    { archived: false, notes: 'note', contact: '', deadline: '2026-04-15', status: 'done' },
+  ];
+  const itemsB = [
+    { archived: false, notes: 'note', contact: '', deadline: '2026-04-15', status: 'done' },
+    { archived: true, notes: '', contact: '', deadline: '', status: 'new' },
+  ];
+
+  assert.strictEqual(
+    JSON.stringify(deriveDashboardChecklistState(itemsA)),
+    JSON.stringify(deriveDashboardChecklistState(itemsB))
+  );
 })();
 
 (function testBuildOpportunityExportPayloadShape() {
