@@ -410,6 +410,20 @@ textarea {
   min-width: 140px;
 }
 
+.dashboard-transfer-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.transfer-feedback {
+  margin-top: 0.35rem;
+}
+
+.transfer-feedback--error {
+  color: #991b1b;
+}
+
 .bulk-actions {
   align-items: center;
   background: #f9fafb;

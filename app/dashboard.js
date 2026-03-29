@@ -8,6 +8,7 @@ import {
 } from '../lib/opportunity-model.js';
 
 const DASHBOARD_FILTERS_STORAGE_KEY = 'opportunityOsDashboardFilters';
+const EXPORT_FILENAME_PREFIX = 'opportunity-os-opportunities';
 const SORT_MODE_NEAREST_DEADLINE = 'deadline_nearest';
 const SORT_MODE_RECENTLY_UPDATED = 'updated_recent';
 const SORT_MODE_TITLE_AZ = 'title_az';
@@ -48,6 +49,112 @@ function parseTags(raw) {
     .split(',')
     .map((tag) => tag.trim())
     .filter(Boolean);
+}
+
+function normalizeTransferTags(rawTags) {
+  if (!Array.isArray(rawTags)) {
+    return [];
+  }
+
+  return rawTags
+    .map((tag) => String(tag || '').trim())
+    .filter(Boolean);
+}
+
+function normalizeTransferOpportunity(seed = {}) {
+  return {
+    id: String(seed.id || '').trim(),
+    title: String(seed.title || '').trim(),
+    type: String(seed.type || '').trim() || 'general',
+    source_link: String(seed.source_link || '').trim(),
+    contact: String(seed.contact || '').trim(),
+    deadline: String(seed.deadline || '').trim(),
+    status: String(seed.status || '').trim() || 'new',
+    tags: normalizeTransferTags(seed.tags),
+    notes: String(seed.notes || '').trim(),
+    archived: Boolean(seed.archived),
+    created_at: String(seed.created_at || '').trim(),
+    updated_at: String(seed.updated_at || '').trim(),
+  };
+}
+
+export function buildOpportunityExportPayload(items = []) {
+  return {
+    opportunities: Array.isArray(items) ? items.map((item) => normalizeTransferOpportunity(item)) : [],
+  };
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function parseOpportunityImportPayload(rawJson) {
+  let parsed = null;
+
+  try {
+    parsed = JSON.parse(String(rawJson || ''));
+  } catch {
+    throw new Error('Invalid JSON.');
+  }
+
+  if (!isPlainObject(parsed) || !Array.isArray(parsed.opportunities)) {
+    throw new Error('Invalid payload shape. Expected {"opportunities": []}.');
+  }
+
+  const normalizedItems = parsed.opportunities.map((item) => {
+    if (!isPlainObject(item)) {
+      throw new Error('Each imported opportunity must be an object.');
+    }
+
+    const normalized = normalizeTransferOpportunity(item);
+    if (!normalized.title) {
+      throw new Error('Each imported opportunity must include a non-empty title.');
+    }
+
+    return normalized;
+  });
+
+  return {
+    opportunities: normalizedItems,
+  };
+}
+
+export function mergeImportedOpportunitiesForUser(
+  userId,
+  importedOpportunities = [],
+  dependencies = {
+    listOpportunitiesForUser,
+    createOpportunityForUser,
+    archiveOpportunityForUser,
+  }
+) {
+  const existing = dependencies.listOpportunitiesForUser(userId, { includeArchived: true });
+  const existingIds = new Set(existing.map((item) => String(item.id || '').trim()).filter(Boolean));
+  let importedCount = 0;
+
+  importedOpportunities.forEach((seed) => {
+    const normalized = normalizeTransferOpportunity(seed);
+    const createSeed = {
+      ...normalized,
+      archived: false,
+    };
+
+    if (createSeed.id && existingIds.has(createSeed.id)) {
+      delete createSeed.id;
+    }
+
+    const created = dependencies.createOpportunityForUser(userId, createSeed);
+    importedCount += 1;
+
+    if (created && created.id) {
+      existingIds.add(String(created.id));
+      if (normalized.archived) {
+        dependencies.archiveOpportunityForUser(userId, created.id);
+      }
+    }
+  });
+
+  return importedCount;
 }
 
 function truncate(text, maxLength = 120) {
@@ -246,6 +353,32 @@ function normalizeSafePhoneContact(value) {
   }
 
   return compact;
+}
+
+function buildTransferFilename(now = new Date()) {
+  const year = now.getUTCFullYear();
+  const month = String(now.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(now.getUTCDate()).padStart(2, '0');
+  return `${EXPORT_FILENAME_PREFIX}-${year}-${month}-${day}.json`;
+}
+
+function triggerJsonDownload(payload, win, doc) {
+  if (!win || !win.URL || typeof win.URL.createObjectURL !== 'function' || typeof Blob !== 'function') {
+    return false;
+  }
+
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: 'application/json',
+  });
+  const downloadUrl = win.URL.createObjectURL(blob);
+  const anchor = doc.createElement('a');
+  anchor.href = downloadUrl;
+  anchor.download = buildTransferFilename();
+  if (typeof anchor.click === 'function') {
+    anchor.click();
+  }
+  win.URL.revokeObjectURL(downloadUrl);
+  return true;
 }
 
 function getContactQuickAction(contactValue) {
@@ -689,6 +822,10 @@ export function initializeDashboard(win = window, doc = document) {
   const bulkArchiveButton = doc.getElementById('bulk-archive-button');
   const bulkStatusSelect = doc.getElementById('bulk-status-select');
   const bulkStatusApplyButton = doc.getElementById('bulk-status-apply-button');
+  const exportJsonButton = doc.getElementById('export-json-button');
+  const importJsonButton = doc.getElementById('import-json-button');
+  const importJsonInput = doc.getElementById('import-json-input');
+  const transferFeedbackNode = doc.getElementById('transfer-feedback');
   const form = doc.getElementById('opportunity-form');
   const saveButton = doc.getElementById('save-opportunity-button');
   const cancelEditButton = doc.getElementById('cancel-edit-button');
@@ -699,6 +836,17 @@ export function initializeDashboard(win = window, doc = document) {
 
   if (emailNode) {
     emailNode.textContent = `Signed in as ${session.email}`;
+  }
+
+  function setTransferFeedback(message, isError = false) {
+    if (!transferFeedbackNode) {
+      return;
+    }
+
+    const normalizedMessage = String(message || '').trim();
+    transferFeedbackNode.textContent = normalizedMessage;
+    transferFeedbackNode.hidden = normalizedMessage.length < 1;
+    transferFeedbackNode.className = isError ? 'meta transfer-feedback transfer-feedback--error' : 'meta transfer-feedback';
   }
 
   function renderList() {
@@ -1032,6 +1180,46 @@ export function initializeDashboard(win = window, doc = document) {
   if (bulkStatusApplyButton) {
     bulkStatusApplyButton.addEventListener('click', () => {
       applyBulkStatus(bulkStatusSelect ? bulkStatusSelect.value : '');
+    });
+  }
+
+  if (exportJsonButton) {
+    exportJsonButton.addEventListener('click', () => {
+      const userItems = listOpportunitiesForUser(session.userId, { includeArchived: true });
+      const payload = buildOpportunityExportPayload(userItems);
+      const didDownload = triggerJsonDownload(payload, win, doc);
+      if (didDownload) {
+        setTransferFeedback(`Exported ${payload.opportunities.length} opportunities to JSON.`);
+      } else {
+        setTransferFeedback('Export is unavailable in this environment.', true);
+      }
+    });
+  }
+
+  if (importJsonButton && importJsonInput) {
+    importJsonButton.addEventListener('click', () => {
+      importJsonInput.value = '';
+      importJsonInput.click();
+    });
+
+    importJsonInput.addEventListener('change', async () => {
+      const file = importJsonInput.files && importJsonInput.files[0];
+      if (!file) {
+        return;
+      }
+
+      try {
+        const rawJson = await file.text();
+        const parsed = parseOpportunityImportPayload(rawJson);
+        const importedCount = mergeImportedOpportunitiesForUser(session.userId, parsed.opportunities);
+        renderList();
+        setTransferFeedback(`Imported ${importedCount} opportunities (merged with existing data).`);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : 'Unknown import error.';
+        setTransferFeedback(`Import failed: ${reason}`, true);
+      } finally {
+        importJsonInput.value = '';
+      }
     });
   }
 
