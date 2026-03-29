@@ -39,7 +39,9 @@ function normalizeSubscriptionPlan(value) {
 
 export function resolveLocalSubscriptionState(win = window) {
   const params = new URLSearchParams((win && win.location && win.location.search) || '');
-  const plan = normalizeSubscriptionPlan(params.get('mockPlan'));
+  const isMockModeEnabled =
+    params.get('mockAuth') === '1' || Boolean(win && win.OPPORTUNITY_OS_ENABLE_MOCK_AUTH === true);
+  const plan = isMockModeEnabled ? normalizeSubscriptionPlan(params.get('mockPlan')) : SUBSCRIPTION_PLAN_FREE;
   const isPaid = plan === SUBSCRIPTION_PLAN_PAID;
 
   return {
@@ -1695,7 +1697,9 @@ export function initializeDashboard(win = window, doc = document) {
       if (boundaryState.isPaid) {
         setSubscriptionFeedback('Paid plan is already active.');
       } else {
-        setSubscriptionFeedback('Upgrade flow is not wired yet. Local mock mode only: use ?mockPlan=paid to preview paid surfaces.');
+        setSubscriptionFeedback(
+          'Upgrade flow is not wired yet. Local mock mode only: use ?mockAuth=1&mockPlan=paid to preview paid surfaces.'
+        );
       }
     });
   }

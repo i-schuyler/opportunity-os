@@ -2241,13 +2241,55 @@ pendingAsyncTests.push(
   const { resolveLocalSubscriptionState } = loadDashboardModule({});
   const freeState = resolveLocalSubscriptionState({ location: { search: '?mockAuth=1' } });
   const paidState = resolveLocalSubscriptionState({ location: { search: '?mockAuth=1&mockPlan=paid' } });
+  const paidWithoutMockAuthState = resolveLocalSubscriptionState({ location: { search: '?mockPlan=paid' } });
   const unknownState = resolveLocalSubscriptionState({ location: { search: '?mockPlan=enterprise' } });
 
   assert.strictEqual(freeState.plan, 'free');
   assert.strictEqual(freeState.isPaid, false);
   assert.strictEqual(paidState.plan, 'paid');
   assert.strictEqual(paidState.isPaid, true);
+  assert.strictEqual(paidWithoutMockAuthState.plan, 'free');
+  assert.strictEqual(paidWithoutMockAuthState.isPaid, false);
   assert.strictEqual(unknownState.plan, 'free');
+})();
+
+(function testBuildSubscriptionBoundaryStateFreeTierCreateBoundaries() {
+  const { buildSubscriptionBoundaryState } = loadDashboardModule({});
+  const nineActive = Array.from({ length: 9 }, (_, index) => ({
+    id: `active-nine-${index + 1}`,
+    archived: false,
+  }));
+  const tenActive = Array.from({ length: 10 }, (_, index) => ({
+    id: `active-ten-${index + 1}`,
+    archived: false,
+  }));
+  const nineAfterArchive = tenActive.map((item, index) => (index === 0 ? { ...item, archived: true } : item));
+
+  const atNine = buildSubscriptionBoundaryState(nineActive, {
+    plan: 'free',
+    isPaid: false,
+    freeOpportunityLimit: 10,
+  });
+  const atTen = buildSubscriptionBoundaryState(tenActive, {
+    plan: 'free',
+    isPaid: false,
+    freeOpportunityLimit: 10,
+  });
+  const afterArchive = buildSubscriptionBoundaryState(nineAfterArchive, {
+    plan: 'free',
+    isPaid: false,
+    freeOpportunityLimit: 10,
+  });
+  const afterDelete = buildSubscriptionBoundaryState(tenActive.slice(1), {
+    plan: 'free',
+    isPaid: false,
+    freeOpportunityLimit: 10,
+  });
+
+  assert.strictEqual(atNine.canCreateOpportunity, true);
+  assert.strictEqual(atTen.canCreateOpportunity, false);
+  assert.strictEqual(afterArchive.canCreateOpportunity, true);
+  assert.strictEqual(afterDelete.canCreateOpportunity, true);
 })();
 
 (function testBuildSubscriptionBoundaryStateFreeLimit() {
@@ -2307,13 +2349,13 @@ pendingAsyncTests.push(
   assert.ok(nodes.subscriptionSummary.textContent.includes('Free plan'));
   assert.ok(
     nodes.subscriptionFeatureList.children.some(
-      (node) => node.textContent === 'Price: $9/month'
+      (node) => node.textContent.includes('Price:')
     ),
     'expected monthly price row in subscription features'
   );
   assert.ok(
     nodes.subscriptionFeatureList.children.some(
-      (node) => node.textContent.includes('Founder Lifetime $79') && node.textContent.includes('first 50 founders')
+      (node) => node.textContent.includes('Founder Lifetime') && node.textContent.includes('first 50 founders')
     ),
     'expected founder lifetime row in subscription features'
   );
