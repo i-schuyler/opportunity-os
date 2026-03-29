@@ -84,6 +84,26 @@ export function buildOpportunityExportPayload(items = []) {
   };
 }
 
+class ImportPartialRollbackError extends Error {
+  constructor(importError, rollbackErrors = []) {
+    const importErrorMessage =
+      importError && typeof importError === 'object' && typeof importError.message === 'string'
+        ? importError.message
+        : String(importError || 'Unknown import error.');
+    const firstRollbackError = rollbackErrors[0];
+    const rollbackErrorMessage =
+      firstRollbackError &&
+      typeof firstRollbackError === 'object' &&
+      typeof firstRollbackError.message === 'string'
+        ? firstRollbackError.message
+        : String(firstRollbackError || 'Unknown rollback error.');
+    super(`Import failed (${importErrorMessage}); rollback incomplete (${rollbackErrorMessage}).`);
+    this.name = 'ImportPartialRollbackError';
+    this.importError = importError;
+    this.rollbackErrors = rollbackErrors;
+  }
+}
+
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -159,15 +179,23 @@ export function mergeImportedOpportunitiesForUser(
       }
     });
   } catch (error) {
+    const rollbackErrors = [];
     if (typeof dependencies.deleteOpportunityForUser === 'function') {
       createdIds.forEach((createdId) => {
         try {
           dependencies.deleteOpportunityForUser(userId, createdId);
-        } catch {
-          // Preserve the original import error; rollback is best-effort.
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError);
         }
       });
+    } else if (createdIds.length > 0) {
+      rollbackErrors.push(new Error('Rollback delete is unavailable.'));
     }
+
+    if (rollbackErrors.length > 0) {
+      throw new ImportPartialRollbackError(error, rollbackErrors);
+    }
+
     throw error;
   }
 
@@ -1233,7 +1261,14 @@ export function initializeDashboard(win = window, doc = document) {
         setTransferFeedback(`Imported ${importedCount} opportunities (merged with existing data).`);
       } catch (error) {
         const reason = error instanceof Error ? error.message : 'Unknown import error.';
-        setTransferFeedback(`Import failed: ${reason}`, true);
+        const isPartialRollbackFailure =
+          error && typeof error === 'object' && error.name === 'ImportPartialRollbackError';
+        setTransferFeedback(
+          isPartialRollbackFailure
+            ? `Import failed with partial rollback: ${reason}`
+            : `Import failed: ${reason}`,
+          true
+        );
       } finally {
         importJsonInput.value = '';
       }

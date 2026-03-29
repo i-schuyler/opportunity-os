@@ -1060,6 +1060,45 @@ function toggleCardSelection(listNode, cardId, checked = true) {
   assert.deepStrictEqual(deleteCalls, ['created-1']);
 })();
 
+(function testMergeImportedOpportunitiesForUserSurfacesRollbackFailure() {
+  const records = [];
+  const deleteCalls = [];
+  let createCalls = 0;
+  const { mergeImportedOpportunitiesForUser } = loadDashboardModule({});
+
+  assert.throws(
+    () =>
+      mergeImportedOpportunitiesForUser(
+        'dev-user',
+        [
+          { title: 'First import' },
+          { title: 'Second import' },
+        ],
+        {
+          listOpportunitiesForUser: () => Array.from(records),
+          createOpportunityForUser: (_userId, seed) => {
+            createCalls += 1;
+            if (createCalls === 2) {
+              throw new Error('create failed');
+            }
+            const created = { ...seed, id: `created-${createCalls}` };
+            records.push(created);
+            return created;
+          },
+          archiveOpportunityForUser: () => {},
+          deleteOpportunityForUser: (_userId, opportunityId) => {
+            deleteCalls.push(opportunityId);
+            throw new Error('delete failed');
+          },
+        }
+      ),
+    /Import failed \(create failed\); rollback incomplete \(delete failed\)\./
+  );
+
+  assert.strictEqual(records.length, 1, 'expected partial import state when rollback delete fails');
+  assert.deepStrictEqual(deleteCalls, ['created-1']);
+})();
+
 (function testDashboardExportJsonControlShowsFeedbackAndDownloads() {
   const model = loadOpportunityModel();
   const storage = makeSessionStorage();
@@ -1232,6 +1271,56 @@ pendingAsyncTests.push(
     assert.strictEqual(nodes.transferFeedback.hidden, false);
     assert.strictEqual(nodes.transferFeedback.className, 'meta transfer-feedback transfer-feedback--error');
     assert.strictEqual(nodes.transferFeedback.textContent, 'Import failed: Invalid JSON.');
+  })()
+);
+
+pendingAsyncTests.push(
+  (async function testDashboardImportRollbackFailureShowsExplicitError() {
+    const { win, doc, nodes } = makeDashboardHarness();
+    const records = [];
+    let createCalls = 0;
+
+    const { initializeDashboard } = loadDashboardModule({
+      getMockSession: () => ({ userId: 'dev-user', email: 'dev@example.com' }),
+      isMockAuthEnabled: () => false,
+      signOut: () => {},
+      listOpportunitiesForUser: () => Array.from(records),
+      createOpportunityForUser: (_sessionUserId, seed) => {
+        createCalls += 1;
+        if (createCalls === 2) {
+          throw new Error('create failed');
+        }
+        const created = { ...seed, id: `created-${createCalls}` };
+        records.push(created);
+        return created;
+      },
+      updateOpportunityForUser: () => null,
+      archiveOpportunityForUser: () => null,
+      deleteOpportunityForUser: () => {
+        throw new Error('delete failed');
+      },
+      window: win,
+      document: doc,
+    });
+
+    initializeDashboard(win, doc);
+    nodes.importJsonInput.files = [
+      {
+        text: () =>
+          JSON.stringify({
+            opportunities: [{ title: 'First import' }, { title: 'Second import' }],
+          }),
+      },
+    ];
+
+    await nodes.importJsonInput.trigger('change');
+
+    assert.strictEqual(nodes.transferFeedback.hidden, false);
+    assert.strictEqual(nodes.transferFeedback.className, 'meta transfer-feedback transfer-feedback--error');
+    assert.strictEqual(
+      nodes.transferFeedback.textContent,
+      'Import failed with partial rollback: Import failed (create failed); rollback incomplete (delete failed).'
+    );
   })()
 );
 
