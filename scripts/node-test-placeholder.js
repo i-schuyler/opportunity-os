@@ -74,7 +74,7 @@ function loadDashboardModule(mocks) {
     '\n'
   );
   source +=
-    '\nmodule.exports = { initializeDashboard, buildCard, buildSampleOpportunitySeeds, normalizeSafeSourceLink, normalizeDashboardFilters, deriveStatusOptions, filterOpportunityItems, sortOpportunityItems, classifyDeadlineUrgency };\n';
+    '\nmodule.exports = { initializeDashboard, buildCard, buildSampleOpportunitySeeds, normalizeSafeSourceLink, normalizeDashboardFilters, deriveStatusOptions, deriveBulkStatusOptions, filterOpportunityItems, sortOpportunityItems, classifyDeadlineUrgency };\n';
 
   const context = {
     ...mocks,
@@ -868,6 +868,22 @@ function toggleCardSelection(listNode, cardId, checked = true) {
   assert.deepStrictEqual(statuses, ['applied', 'interviewing', 'new']);
 })();
 
+(function testDeriveBulkStatusOptionsIncludeQuickValuesAndObservedStatuses() {
+  const { deriveBulkStatusOptions } = loadDashboardModule({});
+
+  const statuses = Array.from(
+    deriveBulkStatusOptions([
+      { status: 'interviewing' },
+      { status: 'new' },
+      { status: 'applied' },
+      { status: 'done' },
+      { status: ' ' },
+    ])
+  );
+
+  assert.deepStrictEqual(statuses, ['new', 'in progress', 'waiting', 'done', 'applied', 'interviewing']);
+})();
+
 (function testFilterOpportunityItemsByViewAndStatus() {
   const { filterOpportunityItems } = loadDashboardModule({});
 
@@ -1266,6 +1282,46 @@ function toggleCardSelection(listNode, cardId, checked = true) {
   assert.strictEqual(nodes.selectedSummary.textContent, '2 selected');
 })();
 
+(function testDashboardBulkStatusOptionsIncludeQuickValuesAndObservedStatuses() {
+  const model = loadOpportunityModel();
+  const storage = makeSessionStorage();
+  const userId = 'dev-user';
+
+  model.createOpportunityForUser(userId, { title: 'Applied', status: 'applied' }, { storage });
+  model.createOpportunityForUser(userId, { title: 'Interviewing', status: 'interviewing' }, { storage });
+
+  const { win, doc, nodes } = makeDashboardHarness();
+
+  const { initializeDashboard } = loadDashboardModule({
+    getMockSession: () => ({ userId, email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {},
+    listOpportunitiesForUser: (sessionUserId, options = {}) =>
+      model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+    createOpportunityForUser: (sessionUserId, seed) =>
+      model.createOpportunityForUser(sessionUserId, seed, { storage }),
+    updateOpportunityForUser: (sessionUserId, opportunityId, updates) =>
+      model.updateOpportunityForUser(sessionUserId, opportunityId, updates, { storage }),
+    archiveOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    deleteOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.deleteOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+
+  const bulkStatuses = nodes.bulkStatusSelect.children
+    .map((option) => option.value)
+    .filter((value) => value);
+
+  assert.deepStrictEqual(
+    bulkStatuses,
+    ['new', 'in progress', 'waiting', 'done', 'applied', 'interviewing']
+  );
+})();
+
 (function testDashboardBulkArchiveUpdatesSelectedItemsAndClearsSelection() {
   const model = loadOpportunityModel();
   const storage = makeSessionStorage();
@@ -1357,6 +1413,96 @@ function toggleCardSelection(listNode, cardId, checked = true) {
   );
   assert.strictEqual(nodes.bulkActions.hidden, true, 'expected selection controls hidden after bulk status apply');
   assert.strictEqual(nodes.bulkStatusSelect.value, '', 'expected bulk status chooser reset after apply');
+})();
+
+(function testDashboardArchivedViewBulkArchiveDisabledAndNoOp() {
+  const model = loadOpportunityModel();
+  const storage = makeSessionStorage();
+  const userId = 'dev-user';
+
+  const archivedOne = model.createOpportunityForUser(userId, { title: 'Archived one', status: 'new' }, { storage });
+  model.archiveOpportunityForUser(userId, archivedOne.id, { storage });
+  const archivedTwo = model.createOpportunityForUser(userId, { title: 'Archived two', status: 'waiting' }, { storage });
+  model.archiveOpportunityForUser(userId, archivedTwo.id, { storage });
+
+  let archiveCalls = 0;
+  const { win, doc, nodes } = makeDashboardHarness({
+    storedFilters: { view: 'archived', status: 'all', sort: 'deadline_nearest' },
+  });
+
+  const { initializeDashboard } = loadDashboardModule({
+    getMockSession: () => ({ userId, email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {},
+    listOpportunitiesForUser: (sessionUserId, options = {}) =>
+      model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+    createOpportunityForUser: (sessionUserId, seed) =>
+      model.createOpportunityForUser(sessionUserId, seed, { storage }),
+    updateOpportunityForUser: (sessionUserId, opportunityId, updates) =>
+      model.updateOpportunityForUser(sessionUserId, opportunityId, updates, { storage }),
+    archiveOpportunityForUser: (sessionUserId, opportunityId) => {
+      archiveCalls += 1;
+      return model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage });
+    },
+    deleteOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.deleteOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+  toggleCardSelection(nodes.list, archivedOne.id, true);
+  assert.strictEqual(nodes.bulkArchiveButton.disabled, true, 'expected bulk archive disabled in archived view');
+
+  nodes.bulkArchiveButton.trigger('click');
+  assert.strictEqual(archiveCalls, 0, 'expected archived-view bulk archive click to be a no-op');
+})();
+
+(function testDashboardArchivedViewBulkStatusIsAllowed() {
+  const model = loadOpportunityModel();
+  const storage = makeSessionStorage();
+  const userId = 'dev-user';
+
+  const archivedOne = model.createOpportunityForUser(userId, { title: 'Archived one', status: 'new' }, { storage });
+  model.archiveOpportunityForUser(userId, archivedOne.id, { storage });
+  const archivedTwo = model.createOpportunityForUser(userId, { title: 'Archived two', status: 'waiting' }, { storage });
+  model.archiveOpportunityForUser(userId, archivedTwo.id, { storage });
+
+  const { win, doc, nodes } = makeDashboardHarness({
+    storedFilters: { view: 'archived', status: 'all', sort: 'deadline_nearest' },
+  });
+
+  const { initializeDashboard } = loadDashboardModule({
+    getMockSession: () => ({ userId, email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {},
+    listOpportunitiesForUser: (sessionUserId, options = {}) =>
+      model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+    createOpportunityForUser: (sessionUserId, seed) =>
+      model.createOpportunityForUser(sessionUserId, seed, { storage }),
+    updateOpportunityForUser: (sessionUserId, opportunityId, updates) =>
+      model.updateOpportunityForUser(sessionUserId, opportunityId, updates, { storage }),
+    archiveOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    deleteOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.deleteOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+  toggleCardSelection(nodes.list, archivedOne.id, true);
+  nodes.bulkStatusSelect.value = 'done';
+  nodes.bulkStatusApplyButton.trigger('click');
+
+  const persisted = model.listOpportunitiesForUser(userId, { includeArchived: true, storage });
+  assert.strictEqual(
+    persisted.find((item) => item.id === archivedOne.id).status,
+    'done',
+    'expected archived-view bulk status to update selected item'
+  );
+  assert.strictEqual(nodes.bulkActions.hidden, true, 'expected selection cleared after archived-view bulk status apply');
+  assert.strictEqual(nodes.bulkArchiveButton.disabled, true, 'expected bulk archive to remain disabled in archived view');
 })();
 
 (function testDashboardBulkActionsKeepFilteredSortedViewCoherent() {
