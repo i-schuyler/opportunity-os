@@ -75,7 +75,7 @@ function loadDashboardModule(mocks) {
     '\n'
   );
   source +=
-    '\nmodule.exports = { initializeDashboard, buildCard, buildSampleOpportunitySeeds, normalizeSafeSourceLink, normalizeDashboardFilters, deriveStatusOptions, deriveBulkStatusOptions, filterOpportunityItems, sortOpportunityItems, classifyDeadlineUrgency, buildOpportunityExportPayload, parseOpportunityImportPayload, mergeImportedOpportunitiesForUser };\n';
+    '\nmodule.exports = { initializeDashboard, buildCard, buildSampleOpportunitySeeds, normalizeSafeSourceLink, normalizeDashboardFilters, deriveStatusOptions, deriveBulkStatusOptions, filterOpportunityItems, sortOpportunityItems, classifyDeadlineUrgency, buildNextBestActions, buildOpportunityExportPayload, parseOpportunityImportPayload, mergeImportedOpportunitiesForUser };\n';
 
   const context = {
     ...mocks,
@@ -385,6 +385,8 @@ function makeDashboardHarness({ storedFilters = null } = {}) {
     viewFilter: new FakeElement('select'),
     statusFilter: new FakeElement('select'),
     sortFilter: new FakeElement('select'),
+    nextBestActionSummary: new FakeElement('p'),
+    nextBestActionList: new FakeElement('ul'),
     summary: new FakeElement('p'),
     bulkActions: new FakeElement('div'),
     selectedSummary: new FakeElement('p'),
@@ -403,6 +405,8 @@ function makeDashboardHarness({ storedFilters = null } = {}) {
     'filter-view': nodes.viewFilter,
     'filter-status': nodes.statusFilter,
     'filter-sort': nodes.sortFilter,
+    'next-best-action-summary': nodes.nextBestActionSummary,
+    'next-best-action-list': nodes.nextBestActionList,
     'filter-summary': nodes.summary,
     'bulk-actions': nodes.bulkActions,
     'selected-summary': nodes.selectedSummary,
@@ -1434,6 +1438,99 @@ pendingAsyncTests.push(
 
   const urgency = classifyDeadlineUrgency('not-a-date', Date.parse('2026-04-10T12:00:00.000Z'));
   assert.strictEqual(urgency, 'no_deadline');
+})();
+
+(function testBuildNextBestActionsIncludesOverdueAndDueSoon() {
+  const { buildNextBestActions } = loadDashboardModule({});
+
+  const suggestions = buildNextBestActions(
+    [
+      { id: 'overdue', title: 'Overdue item', status: 'in progress', deadline: '2026-04-08', archived: false },
+      { id: 'soon', title: 'Due soon item', status: 'in progress', deadline: '2026-04-14', archived: false },
+      { id: 'later', title: 'Later item', status: 'in progress', deadline: '2026-05-01', archived: false },
+    ],
+    Date.parse('2026-04-10T12:00:00.000Z')
+  );
+
+  assert.deepStrictEqual(
+    suggestions.map((item) => item.id),
+    ['overdue', 'soon']
+  );
+  assert.strictEqual(suggestions[0].reasonKey, 'overdue');
+  assert.strictEqual(suggestions[1].reasonKey, 'due_soon');
+})();
+
+(function testBuildNextBestActionsExcludesNonMatchingItemsWhenTopPrioritySlotsFilled() {
+  const { buildNextBestActions } = loadDashboardModule({});
+
+  const suggestions = buildNextBestActions(
+    [
+      { id: 'overdue-a', title: 'Overdue A', status: 'in progress', deadline: '2026-04-07', archived: false },
+      { id: 'overdue-b', title: 'Overdue B', status: 'new', deadline: '2026-04-08', archived: false },
+      { id: 'soon-a', title: 'Soon A', status: 'in progress', deadline: '2026-04-12', archived: false },
+      { id: 'new-only', title: 'New only', status: 'new', deadline: '', archived: false },
+      { id: 'waiting', title: 'Waiting', status: 'waiting', deadline: '', archived: false },
+      { id: 'done', title: 'Done', status: 'done', deadline: '2026-04-09', archived: false },
+      { id: 'archived', title: 'Archived', status: 'in progress', deadline: '2026-04-09', archived: true },
+    ],
+    Date.parse('2026-04-10T12:00:00.000Z')
+  );
+
+  assert.deepStrictEqual(
+    suggestions.map((item) => item.id),
+    ['overdue-a', 'overdue-b', 'soon-a']
+  );
+})();
+
+(function testBuildNextBestActionsDeterministicOrdering() {
+  const { buildNextBestActions } = loadDashboardModule({});
+
+  const items = [
+    { id: 'b-id', title: 'Beta', status: 'new', deadline: '', archived: false },
+    { id: 'a-id', title: 'Alpha', status: 'new', deadline: '', archived: false },
+    { id: 'c-id', title: 'Gamma', status: 'new', deadline: '', archived: false },
+  ];
+  const now = Date.parse('2026-04-10T12:00:00.000Z');
+
+  const first = buildNextBestActions(items, now);
+  const second = buildNextBestActions(items, now);
+
+  assert.deepStrictEqual(
+    first.map((item) => item.id),
+    ['a-id', 'b-id', 'c-id']
+  );
+  assert.deepStrictEqual(
+    second.map((item) => item.id),
+    ['a-id', 'b-id', 'c-id']
+  );
+})();
+
+(function testDashboardNextBestActionsFallbackIsCalm() {
+  const { win, doc, nodes } = makeDashboardHarness();
+
+  const { initializeDashboard } = loadDashboardModule({
+    getMockSession: () => ({ userId: 'dev-user', email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {},
+    listOpportunitiesForUser: () => [
+      { id: 'done-1', title: 'Completed', status: 'done', deadline: '2026-04-09', archived: false },
+      { id: 'archived-1', title: 'Archived', status: 'new', deadline: '2026-04-08', archived: true },
+    ],
+    createOpportunityForUser: () => {},
+    updateOpportunityForUser: () => {},
+    archiveOpportunityForUser: () => {},
+    deleteOpportunityForUser: () => {},
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+
+  assert.strictEqual(nodes.nextBestActionList.children.length, 1, 'expected fallback list item');
+  assert.ok(
+    nodes.nextBestActionList.textContent.includes('No urgent follow-up needed right now.'),
+    'expected calm fallback message in next best actions panel'
+  );
 })();
 
 (function testDashboardFiltersRestoreRenderAndPersistOnChange() {
