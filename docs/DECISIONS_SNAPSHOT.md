@@ -14,3 +14,5 @@
 
 ## Notes
 This file is append-only in spirit. Future decisions should be added rather than silently replacing prior intent.
+
+- Planning note: first billing implementation slice targets one successful monthly paid conversion with server-side entitlements before automating broader founder-lifetime cap logic.
