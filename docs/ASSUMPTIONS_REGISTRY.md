@@ -24,3 +24,5 @@
 - [TENTATIVE] Dashboard notes previews default to a 140-character collapsed snippet, with inline expand/collapse controls only when notes exceed that length.
 - [TENTATIVE] First-run onboarding guidance and the `Load sample opportunities` action appear only when the dashboard is in active/all view and the user has zero stored opportunities.
 - [TENTATIVE] Dashboard bulk actions target selected items in the current rendered view and clear selection after a bulk action completes.
+- [TENTATIVE] Dashboard bulk-status options are derived from quick-status defaults (`new`, `in progress`, `waiting`, `done`) plus statuses present in user data.
+- [TENTATIVE] In archived view, bulk archive stays disabled/no-op while bulk status changes remain allowed for selected archived items.

@@ -329,6 +329,31 @@ export function deriveStatusOptions(items = []) {
   return Array.from(statuses).sort((a, b) => a.localeCompare(b));
 }
 
+export function deriveBulkStatusOptions(items = []) {
+  const statuses = [];
+  const seen = new Set();
+
+  QUICK_STATUS_VALUES.forEach((statusValue) => {
+    const normalized = String(statusValue || '').trim();
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+    seen.add(normalized);
+    statuses.push(normalized);
+  });
+
+  deriveStatusOptions(items).forEach((statusValue) => {
+    const normalized = String(statusValue || '').trim();
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+    seen.add(normalized);
+    statuses.push(normalized);
+  });
+
+  return statuses;
+}
+
 export function filterOpportunityItems(items = [], filters = DEFAULT_DASHBOARD_FILTERS) {
   const normalizedFilters = normalizeDashboardFilters(filters);
 
@@ -685,6 +710,8 @@ export function initializeDashboard(win = window, doc = document) {
     const activeCount = allItems.filter((item) => !item.archived).length;
     const archivedCount = allItems.length - activeCount;
     const statusOptions = deriveStatusOptions(allItems);
+    const bulkStatusOptions = deriveBulkStatusOptions(allItems);
+    const isArchivedView = filterState.view === 'archived';
 
     if (statusFilterNode) {
       statusFilterNode.replaceChildren();
@@ -716,6 +743,25 @@ export function initializeDashboard(win = window, doc = document) {
       sortFilterNode.value = filterState.sort;
     }
 
+    if (bulkStatusSelect) {
+      const previousValue = String(bulkStatusSelect.value || '').trim();
+      bulkStatusSelect.replaceChildren();
+
+      const placeholder = doc.createElement('option');
+      placeholder.value = '';
+      placeholder.textContent = 'Choose status';
+      bulkStatusSelect.append(placeholder);
+
+      bulkStatusOptions.forEach((statusValue) => {
+        const option = doc.createElement('option');
+        option.value = statusValue;
+        option.textContent = statusValue;
+        bulkStatusSelect.append(option);
+      });
+
+      bulkStatusSelect.value = bulkStatusOptions.includes(previousValue) ? previousValue : '';
+    }
+
     const filteredItems = filterOpportunityItems(allItems, filterState);
     const sortedItems = sortOpportunityItems(filteredItems, filterState.sort);
     visibleIds = sortedItems.map((item) => item.id);
@@ -739,7 +785,7 @@ export function initializeDashboard(win = window, doc = document) {
       selectedSummaryNode.textContent = `${selectedCount} selected`;
     }
     if (bulkArchiveButton) {
-      bulkArchiveButton.disabled = selectedCount < 1;
+      bulkArchiveButton.disabled = selectedCount < 1 || isArchivedView;
     }
     if (bulkStatusApplyButton) {
       bulkStatusApplyButton.disabled = selectedCount < 1;
@@ -932,6 +978,10 @@ export function initializeDashboard(win = window, doc = document) {
   attachActionHandler(listNode);
 
   function applyBulkArchive() {
+    if (filterState.view === 'archived') {
+      return;
+    }
+
     const selectedVisibleIds = Array.from(selectedIds).filter((id) => visibleIds.includes(id));
     if (selectedVisibleIds.length < 1) {
       return;
