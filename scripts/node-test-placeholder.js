@@ -226,6 +226,7 @@ class FakeElement {
     this.target = '';
     this.rel = '';
     this.value = '';
+    this.checked = false;
     this.parentNode = null;
     this.listeners = new Map();
     this._textContent = '';
@@ -285,6 +286,15 @@ class FakeElement {
         current.tagName === 'button' &&
         current.dataset &&
         current.dataset.action
+      ) {
+        return current;
+      }
+
+      if (
+        selector === 'input[data-bulk-select]' &&
+        current.tagName === 'input' &&
+        current.dataset &&
+        current.dataset.bulkSelect
       ) {
         return current;
       }
@@ -366,6 +376,11 @@ function makeDashboardHarness({ storedFilters = null } = {}) {
     statusFilter: new FakeElement('select'),
     sortFilter: new FakeElement('select'),
     summary: new FakeElement('p'),
+    bulkActions: new FakeElement('div'),
+    selectedSummary: new FakeElement('p'),
+    bulkArchiveButton: new FakeElement('button'),
+    bulkStatusSelect: new FakeElement('select'),
+    bulkStatusApplyButton: new FakeElement('button'),
   };
 
   const nodeById = {
@@ -375,6 +390,11 @@ function makeDashboardHarness({ storedFilters = null } = {}) {
     'filter-status': nodes.statusFilter,
     'filter-sort': nodes.sortFilter,
     'filter-summary': nodes.summary,
+    'bulk-actions': nodes.bulkActions,
+    'selected-summary': nodes.selectedSummary,
+    'bulk-archive-button': nodes.bulkArchiveButton,
+    'bulk-status-select': nodes.bulkStatusSelect,
+    'bulk-status-apply-button': nodes.bulkStatusApplyButton,
     'opportunity-form': null,
     'save-opportunity-button': null,
     'cancel-edit-button': null,
@@ -431,6 +451,18 @@ function clickCardAction(listNode, cardId, action, statusValue = '') {
   );
   assert.ok(targetButton, `expected button action "${action}" on card "${cardId}"`);
   listNode.trigger('click', { target: targetButton });
+}
+
+function toggleCardSelection(listNode, cardId, checked = true) {
+  const card = findRenderedCard(listNode, cardId);
+  assert.ok(card, `expected rendered card for id "${cardId}"`);
+  const checkbox = findFirstNode(
+    card,
+    (node) => node && node.tagName === 'input' && node.dataset && node.dataset.bulkSelect
+  );
+  assert.ok(checkbox, `expected bulk selection checkbox on card "${cardId}"`);
+  checkbox.checked = checked;
+  listNode.trigger('change', { target: checkbox });
 }
 
 (function testDashboardSourceLinkHttpsIsClickable() {
@@ -1147,7 +1179,10 @@ function clickCardAction(listNode, cardId, action, statusValue = '') {
   assert.strictEqual(persisted.status, 'done');
 
   const rendered = findRenderedCard(nodes.list, created.id);
-  const statusNode = findFirstNode(rendered, (node) => node.tagName === 'span' && node.className === 'meta');
+  const statusNode = findFirstNode(
+    rendered,
+    (node) => node.tagName === 'span' && String(node.className || '').includes('opportunity-card__status')
+  );
   assert.ok(statusNode, 'expected rendered status node');
   assert.strictEqual(statusNode.textContent, 'done');
 })();
@@ -1187,6 +1222,180 @@ function clickCardAction(listNode, cardId, action, statusValue = '') {
 
   assert.deepStrictEqual(renderedCardIds(nodes.list), [alpha.id, zulu.id]);
   clickCardAction(nodes.list, zulu.id, 'quick_status', 'done');
+
+  assert.strictEqual(nodes.statusFilter.value, 'in progress');
+  assert.deepStrictEqual(renderedCardIds(nodes.list), [alpha.id]);
+  assert.strictEqual(nodes.summary.textContent, 'Active: 3 | Archived: 0 | Showing: 1');
+})();
+
+(function testDashboardBulkSelectionShowsSelectedCount() {
+  const model = loadOpportunityModel();
+  const storage = makeSessionStorage();
+  const userId = 'dev-user';
+
+  const first = model.createOpportunityForUser(userId, { title: 'First', status: 'new' }, { storage });
+  const second = model.createOpportunityForUser(userId, { title: 'Second', status: 'new' }, { storage });
+
+  const { win, doc, nodes } = makeDashboardHarness();
+
+  const { initializeDashboard } = loadDashboardModule({
+    getMockSession: () => ({ userId, email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {},
+    listOpportunitiesForUser: (sessionUserId, options = {}) =>
+      model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+    createOpportunityForUser: (sessionUserId, seed) =>
+      model.createOpportunityForUser(sessionUserId, seed, { storage }),
+    updateOpportunityForUser: (sessionUserId, opportunityId, updates) =>
+      model.updateOpportunityForUser(sessionUserId, opportunityId, updates, { storage }),
+    archiveOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    deleteOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.deleteOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+  assert.strictEqual(nodes.bulkActions.hidden, true, 'expected bulk controls hidden before selection');
+
+  toggleCardSelection(nodes.list, first.id, true);
+  toggleCardSelection(nodes.list, second.id, true);
+
+  assert.strictEqual(nodes.bulkActions.hidden, false, 'expected bulk controls shown when items are selected');
+  assert.strictEqual(nodes.selectedSummary.textContent, '2 selected');
+})();
+
+(function testDashboardBulkArchiveUpdatesSelectedItemsAndClearsSelection() {
+  const model = loadOpportunityModel();
+  const storage = makeSessionStorage();
+  const userId = 'dev-user';
+
+  const first = model.createOpportunityForUser(userId, { title: 'First', status: 'new' }, { storage });
+  const second = model.createOpportunityForUser(userId, { title: 'Second', status: 'waiting' }, { storage });
+  const third = model.createOpportunityForUser(userId, { title: 'Third', status: 'done' }, { storage });
+
+  const { win, doc, nodes } = makeDashboardHarness();
+
+  const { initializeDashboard } = loadDashboardModule({
+    getMockSession: () => ({ userId, email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {},
+    listOpportunitiesForUser: (sessionUserId, options = {}) =>
+      model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+    createOpportunityForUser: (sessionUserId, seed) =>
+      model.createOpportunityForUser(sessionUserId, seed, { storage }),
+    updateOpportunityForUser: (sessionUserId, opportunityId, updates) =>
+      model.updateOpportunityForUser(sessionUserId, opportunityId, updates, { storage }),
+    archiveOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    deleteOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.deleteOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+  toggleCardSelection(nodes.list, first.id, true);
+  toggleCardSelection(nodes.list, second.id, true);
+  nodes.bulkArchiveButton.trigger('click');
+
+  const persisted = model.listOpportunitiesForUser(userId, { includeArchived: true, storage });
+  const archivedIds = persisted.filter((item) => item.archived).map((item) => item.id);
+  assert.ok(archivedIds.includes(first.id), 'expected first selected item archived');
+  assert.ok(archivedIds.includes(second.id), 'expected second selected item archived');
+  assert.ok(!archivedIds.includes(third.id), 'expected unselected item to stay active');
+  assert.strictEqual(nodes.bulkActions.hidden, true, 'expected selection controls hidden after bulk archive');
+  assert.strictEqual(nodes.summary.textContent, 'Active: 1 | Archived: 2 | Showing: 1');
+})();
+
+(function testDashboardBulkStatusUpdatesSelectedItemsAndClearsSelection() {
+  const model = loadOpportunityModel();
+  const storage = makeSessionStorage();
+  const userId = 'dev-user';
+
+  const first = model.createOpportunityForUser(userId, { title: 'First', status: 'new' }, { storage });
+  const second = model.createOpportunityForUser(userId, { title: 'Second', status: 'new' }, { storage });
+  model.createOpportunityForUser(userId, { title: 'Third', status: 'waiting' }, { storage });
+
+  const { win, doc, nodes } = makeDashboardHarness();
+
+  const { initializeDashboard } = loadDashboardModule({
+    getMockSession: () => ({ userId, email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {},
+    listOpportunitiesForUser: (sessionUserId, options = {}) =>
+      model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+    createOpportunityForUser: (sessionUserId, seed) =>
+      model.createOpportunityForUser(sessionUserId, seed, { storage }),
+    updateOpportunityForUser: (sessionUserId, opportunityId, updates) =>
+      model.updateOpportunityForUser(sessionUserId, opportunityId, updates, { storage }),
+    archiveOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    deleteOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.deleteOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+  toggleCardSelection(nodes.list, first.id, true);
+  toggleCardSelection(nodes.list, second.id, true);
+  nodes.bulkStatusSelect.value = 'done';
+  nodes.bulkStatusApplyButton.trigger('click');
+
+  const persisted = model.listOpportunitiesForUser(userId, { includeArchived: true, storage });
+  assert.strictEqual(
+    persisted.find((item) => item.id === first.id).status,
+    'done',
+    'expected first selected item status updated'
+  );
+  assert.strictEqual(
+    persisted.find((item) => item.id === second.id).status,
+    'done',
+    'expected second selected item status updated'
+  );
+  assert.strictEqual(nodes.bulkActions.hidden, true, 'expected selection controls hidden after bulk status apply');
+  assert.strictEqual(nodes.bulkStatusSelect.value, '', 'expected bulk status chooser reset after apply');
+})();
+
+(function testDashboardBulkActionsKeepFilteredSortedViewCoherent() {
+  const model = loadOpportunityModel();
+  const storage = makeSessionStorage();
+  const userId = 'dev-user';
+
+  const alpha = model.createOpportunityForUser(userId, { title: 'Alpha', status: 'in progress' }, { storage });
+  const zulu = model.createOpportunityForUser(userId, { title: 'Zulu', status: 'in progress' }, { storage });
+  model.createOpportunityForUser(userId, { title: 'Beta', status: 'new' }, { storage });
+
+  const { win, doc, nodes } = makeDashboardHarness({
+    storedFilters: { view: 'active', status: 'in progress', sort: 'title_az' },
+  });
+
+  const { initializeDashboard } = loadDashboardModule({
+    getMockSession: () => ({ userId, email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {},
+    listOpportunitiesForUser: (sessionUserId, options = {}) =>
+      model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+    createOpportunityForUser: (sessionUserId, seed) =>
+      model.createOpportunityForUser(sessionUserId, seed, { storage }),
+    updateOpportunityForUser: (sessionUserId, opportunityId, updates) =>
+      model.updateOpportunityForUser(sessionUserId, opportunityId, updates, { storage }),
+    archiveOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    deleteOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.deleteOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+  assert.deepStrictEqual(renderedCardIds(nodes.list), [alpha.id, zulu.id]);
+
+  toggleCardSelection(nodes.list, zulu.id, true);
+  nodes.bulkStatusSelect.value = 'done';
+  nodes.bulkStatusApplyButton.trigger('click');
 
   assert.strictEqual(nodes.statusFilter.value, 'in progress');
   assert.deepStrictEqual(renderedCardIds(nodes.list), [alpha.id]);

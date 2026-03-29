@@ -90,6 +90,23 @@
             </label>
           </div>
           <p id="filter-summary" class="meta"></p>
+          <div id="bulk-actions" class="bulk-actions" hidden>
+            <p id="selected-summary" class="meta"></p>
+            <div class="bulk-actions__controls">
+              <button id="bulk-archive-button" type="button" class="button button--subtle">Archive selected</button>
+              <label class="field-inline" for="bulk-status-select">
+                <span>Set status</span>
+                <select id="bulk-status-select">
+                  <option value="">Choose status</option>
+                  <option value="new">new</option>
+                  <option value="in progress">in progress</option>
+                  <option value="waiting">waiting</option>
+                  <option value="done">done</option>
+                </select>
+              </label>
+              <button id="bulk-status-apply-button" type="button" class="button button--subtle">Apply status</button>
+            </div>
+          </div>
           <div id="opportunity-list" class="stack-sm"></div>
         </section>
       </main>

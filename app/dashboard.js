@@ -459,7 +459,9 @@ function resetForm(form, cancelEditButton, saveButton) {
   }
 }
 
-function buildCard(item, doc) {
+function buildCard(item, doc, options = {}) {
+  const showSelection = Boolean(options.showSelection);
+  const isSelected = Boolean(options.isSelected);
   const card = doc.createElement('article');
   card.className = 'opportunity-card';
   card.dataset.id = item.id;
@@ -470,8 +472,32 @@ function buildCard(item, doc) {
   const title = doc.createElement('h3');
   title.textContent = item.title || 'Untitled opportunity';
 
+  const titleRow = doc.createElement('div');
+  titleRow.className = 'opportunity-card__title-row';
+
+  if (showSelection) {
+    const selectionToggle = doc.createElement('label');
+    selectionToggle.className = 'toggle opportunity-card__select-toggle';
+
+    const selectionInput = doc.createElement('input');
+    selectionInput.type = 'checkbox';
+    selectionInput.dataset.bulkSelect = '1';
+    selectionInput.dataset.id = item.id;
+    selectionInput.checked = isSelected;
+    selectionInput.ariaLabel = `Select ${item.title || 'opportunity'}`;
+
+    const selectionText = doc.createElement('span');
+    selectionText.className = 'meta';
+    selectionText.textContent = 'Select';
+
+    selectionToggle.append(selectionInput, selectionText);
+    titleRow.append(selectionToggle);
+  }
+
+  titleRow.append(title);
+
   const status = doc.createElement('span');
-  status.className = 'meta';
+  status.className = 'meta opportunity-card__status';
   status.textContent = item.status || 'new';
 
   const urgency = doc.createElement('span');
@@ -483,7 +509,7 @@ function buildCard(item, doc) {
   headerMeta.className = 'opportunity-card__header-meta';
   headerMeta.append(status, urgency);
 
-  header.append(title, headerMeta);
+  header.append(titleRow, headerMeta);
 
   const meta = doc.createElement('div');
   meta.className = 'opportunity-card__meta';
@@ -633,11 +659,18 @@ export function initializeDashboard(win = window, doc = document) {
   const statusFilterNode = doc.getElementById('filter-status');
   const sortFilterNode = doc.getElementById('filter-sort');
   const summaryNode = doc.getElementById('filter-summary');
+  const bulkActionsNode = doc.getElementById('bulk-actions');
+  const selectedSummaryNode = doc.getElementById('selected-summary');
+  const bulkArchiveButton = doc.getElementById('bulk-archive-button');
+  const bulkStatusSelect = doc.getElementById('bulk-status-select');
+  const bulkStatusApplyButton = doc.getElementById('bulk-status-apply-button');
   const form = doc.getElementById('opportunity-form');
   const saveButton = doc.getElementById('save-opportunity-button');
   const cancelEditButton = doc.getElementById('cancel-edit-button');
   const signOutButton = doc.getElementById('sign-out-button');
   const filterState = readDashboardFilters(win);
+  const selectedIds = new Set();
+  let visibleIds = [];
 
   if (emailNode) {
     emailNode.textContent = `Signed in as ${session.email}`;
@@ -685,10 +718,34 @@ export function initializeDashboard(win = window, doc = document) {
 
     const filteredItems = filterOpportunityItems(allItems, filterState);
     const sortedItems = sortOpportunityItems(filteredItems, filterState.sort);
+    visibleIds = sortedItems.map((item) => item.id);
+    const visibleIdSet = new Set(visibleIds);
+    Array.from(selectedIds).forEach((id) => {
+      if (!visibleIdSet.has(id)) {
+        selectedIds.delete(id);
+      }
+    });
+    const selectedCount = selectedIds.size;
     listNode.replaceChildren();
 
     if (summaryNode) {
       summaryNode.textContent = `Active: ${activeCount} | Archived: ${archivedCount} | Showing: ${sortedItems.length}`;
+    }
+
+    if (bulkActionsNode) {
+      bulkActionsNode.hidden = selectedCount < 1;
+    }
+    if (selectedSummaryNode) {
+      selectedSummaryNode.textContent = `${selectedCount} selected`;
+    }
+    if (bulkArchiveButton) {
+      bulkArchiveButton.disabled = selectedCount < 1;
+    }
+    if (bulkStatusApplyButton) {
+      bulkStatusApplyButton.disabled = selectedCount < 1;
+    }
+    if (bulkStatusSelect && selectedCount < 1) {
+      bulkStatusSelect.value = '';
     }
 
     if (sortedItems.length === 0) {
@@ -708,7 +765,12 @@ export function initializeDashboard(win = window, doc = document) {
       }
     } else {
       sortedItems.forEach((item) => {
-        listNode.append(buildCard(item, doc));
+        listNode.append(
+          buildCard(item, doc, {
+            showSelection: true,
+            isSelected: selectedIds.has(item.id),
+          })
+        );
       });
     }
   }
@@ -799,6 +861,7 @@ export function initializeDashboard(win = window, doc = document) {
 
       if (action === 'delete') {
         deleteOpportunityForUser(session.userId, id);
+        selectedIds.delete(id);
         if (form && form.elements.id.value === id) {
           resetForm(form, cancelEditButton, saveButton);
         }
@@ -808,6 +871,7 @@ export function initializeDashboard(win = window, doc = document) {
 
       if (action === 'archive') {
         archiveOpportunityForUser(session.userId, id);
+        selectedIds.delete(id);
         if (form && form.elements.id.value === id) {
           resetForm(form, cancelEditButton, saveButton);
         }
@@ -843,9 +907,83 @@ export function initializeDashboard(win = window, doc = document) {
         form.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
     });
+
+    target.addEventListener('change', (event) => {
+      const selectionInput = event.target.closest('input[data-bulk-select]');
+      if (!selectionInput) {
+        return;
+      }
+
+      const selectedId = String(selectionInput.dataset.id || '').trim();
+      if (!selectedId) {
+        return;
+      }
+
+      if (selectionInput.checked) {
+        selectedIds.add(selectedId);
+      } else {
+        selectedIds.delete(selectedId);
+      }
+
+      renderList();
+    });
   }
 
   attachActionHandler(listNode);
+
+  function applyBulkArchive() {
+    const selectedVisibleIds = Array.from(selectedIds).filter((id) => visibleIds.includes(id));
+    if (selectedVisibleIds.length < 1) {
+      return;
+    }
+
+    selectedVisibleIds.forEach((id) => {
+      archiveOpportunityForUser(session.userId, id);
+      if (form && form.elements.id.value === id) {
+        resetForm(form, cancelEditButton, saveButton);
+      }
+    });
+
+    selectedIds.clear();
+    renderList();
+  }
+
+  function applyBulkStatus(nextStatus) {
+    const normalizedStatus = String(nextStatus || '').trim();
+    if (!normalizedStatus) {
+      return;
+    }
+
+    const selectedVisibleIds = Array.from(selectedIds).filter((id) => visibleIds.includes(id));
+    if (selectedVisibleIds.length < 1) {
+      return;
+    }
+
+    selectedVisibleIds.forEach((id) => {
+      updateOpportunityForUser(session.userId, id, { status: normalizedStatus });
+      if (form && form.elements.id.value === id && form.elements.status) {
+        form.elements.status.value = normalizedStatus;
+      }
+    });
+
+    selectedIds.clear();
+    if (bulkStatusSelect) {
+      bulkStatusSelect.value = '';
+    }
+    renderList();
+  }
+
+  if (bulkArchiveButton) {
+    bulkArchiveButton.addEventListener('click', () => {
+      applyBulkArchive();
+    });
+  }
+
+  if (bulkStatusApplyButton) {
+    bulkStatusApplyButton.addEventListener('click', () => {
+      applyBulkStatus(bulkStatusSelect ? bulkStatusSelect.value : '');
+    });
+  }
 
   if (signOutButton) {
     signOutButton.addEventListener('click', () => {
