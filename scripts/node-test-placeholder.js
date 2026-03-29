@@ -118,6 +118,172 @@ function loadOpportunityModel() {
   return context.module.exports;
 }
 
+function loadBillingRuntimeModule() {
+  const filePath = path.join(__dirname, '..', 'lib', 'billing-runtime.js');
+  let source = fs.readFileSync(filePath, 'utf8');
+
+  source = source.replace(/export async function\s+/g, 'async function ');
+  source = source.replace(/export function\s+/g, 'function ');
+  source = source.replace(/export const\s+/g, 'const ');
+  source +=
+    '\nmodule.exports = { createInMemoryBillingStore, toSubscriptionState, readEntitlementForUser, createMonthlyCheckoutSession, applyWebhookEvent, createBillingRuntime, createStripeCheckoutAdapter, BILLING_ENTITLEMENT_STATES };\n';
+
+  const context = {
+    module: { exports: {} },
+    exports: {},
+    Date,
+    URLSearchParams,
+  };
+
+  vm.createContext(context);
+  new vm.Script(source, { filename: filePath }).runInContext(context);
+  return context.module.exports;
+}
+
+function loadBillingApiRoutesModule(runtimeModule) {
+  const filePath = path.join(__dirname, '..', 'lib', 'billing-api-routes.js');
+  let source = fs.readFileSync(filePath, 'utf8');
+
+  source = source.replace(/^import[\s\S]*?;\n/gm, '');
+  source = source.replace(/export function\s+/g, 'function ');
+  source = source.replace(/export const\s+/g, 'const ');
+  source += '\nmodule.exports = { BILLING_API_PATHS, createBillingApiRequestHandler, createEnvStripeCheckoutAdapter };\n';
+
+  const context = {
+    ...runtimeModule,
+    module: { exports: {} },
+    exports: {},
+    globalThis,
+  };
+
+  vm.createContext(context);
+  new vm.Script(source, { filename: filePath }).runInContext(context);
+  return context.module.exports;
+}
+
+(function testBillingEntitlementReadFailsClosedWhenUnknown() {
+  const billing = loadBillingRuntimeModule();
+  const store = billing.createInMemoryBillingStore();
+
+  const freeEntitlement = billing.readEntitlementForUser(store, 'dev-user');
+  assert.strictEqual(freeEntitlement.entitlementState, 'free');
+  assert.strictEqual(freeEntitlement.plan, 'free');
+  assert.strictEqual(freeEntitlement.isPaid, false);
+
+  const unknownEntitlement = billing.readEntitlementForUser(
+    {
+      getEntitlement() {
+        throw new Error('store-read-failed');
+      },
+    },
+    'dev-user'
+  );
+  assert.strictEqual(unknownEntitlement.entitlementState, 'unknown');
+  assert.strictEqual(unknownEntitlement.plan, 'free');
+  assert.strictEqual(unknownEntitlement.isPaid, false);
+})();
+
+pendingAsyncTests.push(
+  (async function testBillingCheckoutSessionAndWebhookRuntimePaths() {
+    const billing = loadBillingRuntimeModule();
+    const routes = loadBillingApiRoutesModule(billing);
+    const store = billing.createInMemoryBillingStore();
+
+    const handler = routes.createBillingApiRequestHandler({
+      store,
+      baseUrl: 'https://app.example.test',
+      webhookVerifier: ({ rawBody }) => JSON.parse(rawBody),
+      stripeAdapter: {
+        async createMonthlyCheckoutSession({ userId, successUrl, cancelUrl }) {
+          assert.strictEqual(userId, 'dev-user');
+          assert.strictEqual(successUrl, 'https://app.example.test/app/dashboard.html?checkout=success');
+          assert.strictEqual(cancelUrl, 'https://app.example.test/app/dashboard.html?checkout=cancel');
+          return {
+            sessionId: 'cs_test_123',
+            checkoutUrl: 'https://checkout.stripe.test/session/cs_test_123',
+            subscriptionId: 'sub_test_123',
+          };
+        },
+      },
+    });
+
+    const entitlementResponse = await handler({
+      method: 'GET',
+      path: routes.BILLING_API_PATHS.ENTITLEMENTS,
+      headers: { 'x-opportunity-os-user-id': 'dev-user' },
+    });
+    assert.strictEqual(entitlementResponse.status, 200);
+    assert.strictEqual(entitlementResponse.body.entitlementState, 'free');
+
+    const checkoutResponse = await handler({
+      method: 'POST',
+      path: routes.BILLING_API_PATHS.CHECKOUT_SESSION,
+      headers: { 'x-opportunity-os-user-id': 'dev-user' },
+      body: '{}',
+    });
+    assert.strictEqual(checkoutResponse.status, 200);
+    assert.strictEqual(checkoutResponse.body.checkoutUrl, 'https://checkout.stripe.test/session/cs_test_123');
+
+    const checkoutCompletedWebhook = await handler({
+      method: 'POST',
+      path: routes.BILLING_API_PATHS.STRIPE_WEBHOOK,
+      body: JSON.stringify({
+        id: 'evt_checkout_1',
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            client_reference_id: 'dev-user',
+            subscription: 'sub_test_123',
+          },
+        },
+      }),
+    });
+    assert.strictEqual(checkoutCompletedWebhook.status, 200);
+    assert.strictEqual(checkoutCompletedWebhook.body.applied, true);
+
+    const paidEntitlement = billing.readEntitlementForUser(store, 'dev-user');
+    assert.strictEqual(paidEntitlement.entitlementState, 'paid_subscription_active');
+    assert.strictEqual(paidEntitlement.isPaid, true);
+
+    const duplicateWebhook = await handler({
+      method: 'POST',
+      path: routes.BILLING_API_PATHS.STRIPE_WEBHOOK,
+      body: JSON.stringify({
+        id: 'evt_checkout_1',
+        type: 'checkout.session.completed',
+        data: {
+          object: {
+            client_reference_id: 'dev-user',
+            subscription: 'sub_test_123',
+          },
+        },
+      }),
+    });
+    assert.strictEqual(duplicateWebhook.status, 200);
+    assert.strictEqual(duplicateWebhook.body.duplicate, true);
+
+    const subscriptionDeletedWebhook = await handler({
+      method: 'POST',
+      path: routes.BILLING_API_PATHS.STRIPE_WEBHOOK,
+      body: JSON.stringify({
+        id: 'evt_subscription_deleted_1',
+        type: 'customer.subscription.deleted',
+        data: {
+          object: {
+            id: 'sub_test_123',
+          },
+        },
+      }),
+    });
+    assert.strictEqual(subscriptionDeletedWebhook.status, 200);
+    assert.strictEqual(subscriptionDeletedWebhook.body.applied, true);
+
+    const freeAgainEntitlement = billing.readEntitlementForUser(store, 'dev-user');
+    assert.strictEqual(freeAgainEntitlement.entitlementState, 'free');
+    assert.strictEqual(freeAgainEntitlement.isPaid, false);
+  })()
+);
+
 (function testGetMockSessionValid() {
   const windowObj = {
     OPPORTUNITY_OS_ENABLE_MOCK_AUTH: true,
@@ -2627,6 +2793,122 @@ pendingAsyncTests.push(
   assert.strictEqual(nodes.upgradeCtaButton.disabled, true);
   assert.ok(nodes.subscriptionSummary.textContent.includes('Paid plan active'));
 })();
+
+pendingAsyncTests.push(
+  (async function testDashboardServerUnknownEntitlementFailsClosedToFree() {
+    const model = loadOpportunityModel();
+    const storage = makeSessionStorage();
+    const userId = 'dev-user';
+    model.createOpportunityForUser(userId, { title: 'First', status: 'new' }, { storage });
+
+    const { win, doc, nodes } = makeDashboardHarness();
+    win.location.search = '?mockAuth=1';
+    win.fetch = async (requestPath) => {
+      if (requestPath === '/api/entitlements') {
+        return {
+          ok: true,
+          async json() {
+            return { entitlementState: 'unknown' };
+          },
+        };
+      }
+      throw new Error(`unexpected fetch path: ${requestPath}`);
+    };
+
+    const { initializeDashboard } = loadDashboardModule({
+      getMockSession: () => ({ userId, email: 'dev@example.com' }),
+      isMockAuthEnabled: () => false,
+      signOut: () => {},
+      listOpportunitiesForUser: (sessionUserId, options = {}) =>
+        model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+      createOpportunityForUser: (sessionUserId, seed) =>
+        model.createOpportunityForUser(sessionUserId, seed, { storage }),
+      updateOpportunityForUser: (sessionUserId, opportunityId, updates) =>
+        model.updateOpportunityForUser(sessionUserId, opportunityId, updates, { storage }),
+      archiveOpportunityForUser: (sessionUserId, opportunityId) =>
+        model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage }),
+      deleteOpportunityForUser: (sessionUserId, opportunityId) =>
+        model.deleteOpportunityForUser(sessionUserId, opportunityId, { storage }),
+      window: win,
+      document: doc,
+    });
+
+    initializeDashboard(win, doc);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    assert.strictEqual(nodes.exportJsonButton.disabled, true);
+    assert.strictEqual(nodes.importJsonButton.disabled, true);
+    assert.strictEqual(nodes.nextBestActionSummary.textContent, 'Locked on free plan.');
+    assert.ok(nodes.subscriptionSummary.textContent.includes('Free plan'));
+  })()
+);
+
+pendingAsyncTests.push(
+  (async function testDashboardUpgradeStartsMonthlyCheckoutSession() {
+    const model = loadOpportunityModel();
+    const storage = makeSessionStorage();
+    const userId = 'dev-user';
+    model.createOpportunityForUser(userId, { title: 'First', status: 'new' }, { storage });
+
+    const { win, doc, nodes } = makeDashboardHarness();
+    win.location.search = '?mockAuth=1';
+    let redirectedTo = null;
+    win.location.assign = (target) => {
+      redirectedTo = target;
+    };
+    const fetchCalls = [];
+    win.fetch = async (requestPath, options = {}) => {
+      fetchCalls.push({ requestPath, options });
+      if (requestPath === '/api/entitlements') {
+        return {
+          ok: true,
+          async json() {
+            return { entitlementState: 'free' };
+          },
+        };
+      }
+      if (requestPath === '/api/billing/checkout-session') {
+        return {
+          ok: true,
+          async json() {
+            return { checkoutUrl: 'https://checkout.stripe.test/session/cs_live_path' };
+          },
+        };
+      }
+      throw new Error(`unexpected fetch path: ${requestPath}`);
+    };
+
+    const { initializeDashboard } = loadDashboardModule({
+      getMockSession: () => ({ userId, email: 'dev@example.com' }),
+      isMockAuthEnabled: () => false,
+      signOut: () => {},
+      listOpportunitiesForUser: (sessionUserId, options = {}) =>
+        model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+      createOpportunityForUser: (sessionUserId, seed) =>
+        model.createOpportunityForUser(sessionUserId, seed, { storage }),
+      updateOpportunityForUser: (sessionUserId, opportunityId, updates) =>
+        model.updateOpportunityForUser(sessionUserId, opportunityId, updates, { storage }),
+      archiveOpportunityForUser: (sessionUserId, opportunityId) =>
+        model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage }),
+      deleteOpportunityForUser: (sessionUserId, opportunityId) =>
+        model.deleteOpportunityForUser(sessionUserId, opportunityId, { storage }),
+      window: win,
+      document: doc,
+    });
+
+    initializeDashboard(win, doc);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await nodes.upgradeCtaButton.trigger('click');
+
+    assert.strictEqual(redirectedTo, 'https://checkout.stripe.test/session/cs_live_path');
+    const checkoutCall = fetchCalls.find((entry) => entry.requestPath === '/api/billing/checkout-session');
+    assert.ok(checkoutCall, 'expected checkout-session request on upgrade click');
+    assert.strictEqual(checkoutCall.options.method, 'POST');
+  })()
+);
 
 (function testOpportunityModelCrud() {
   const model = loadOpportunityModel();
