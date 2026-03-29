@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 const vm = require('vm');
+const pendingAsyncTests = [];
 
 const appDir = path.join(__dirname, '..', 'app');
 const requiredFiles = ['index.html', 'styles.css', 'main.js'];
@@ -83,6 +84,7 @@ function loadDashboardModule(mocks) {
     JSON,
     URL,
     URLSearchParams,
+    Blob: mocks.Blob || globalThis.Blob,
   };
 
   vm.createContext(context);
@@ -227,6 +229,7 @@ class FakeElement {
     this.rel = '';
     this.value = '';
     this.checked = false;
+    this.files = null;
     this.parentNode = null;
     this.listeners = new Map();
     this._textContent = '';
@@ -277,6 +280,10 @@ class FakeElement {
     this.listeners.get(type).push(handler);
   }
 
+  click() {
+    return this.trigger('click');
+  }
+
   closest(selector) {
     let current = this;
 
@@ -311,13 +318,16 @@ class FakeElement {
 
   trigger(type, eventOverrides = {}) {
     const handlers = this.listeners.get(type) || [];
-    handlers.forEach((handler) => {
-      handler({
-        target: this,
-        preventDefault() {},
-        ...eventOverrides,
-      });
-    });
+    const settled = handlers.map((handler) =>
+      Promise.resolve(
+        handler({
+          target: this,
+          preventDefault() {},
+          ...eventOverrides,
+        })
+      )
+    );
+    return Promise.all(settled);
   }
 }
 
@@ -381,6 +391,10 @@ function makeDashboardHarness({ storedFilters = null } = {}) {
     bulkArchiveButton: new FakeElement('button'),
     bulkStatusSelect: new FakeElement('select'),
     bulkStatusApplyButton: new FakeElement('button'),
+    exportJsonButton: new FakeElement('button'),
+    importJsonButton: new FakeElement('button'),
+    importJsonInput: new FakeElement('input'),
+    transferFeedback: new FakeElement('p'),
   };
 
   const nodeById = {
@@ -395,6 +409,10 @@ function makeDashboardHarness({ storedFilters = null } = {}) {
     'bulk-archive-button': nodes.bulkArchiveButton,
     'bulk-status-select': nodes.bulkStatusSelect,
     'bulk-status-apply-button': nodes.bulkStatusApplyButton,
+    'export-json-button': nodes.exportJsonButton,
+    'import-json-button': nodes.importJsonButton,
+    'import-json-input': nodes.importJsonInput,
+    'transfer-feedback': nodes.transferFeedback,
     'opportunity-form': null,
     'save-opportunity-button': null,
     'cancel-edit-button': null,
@@ -999,6 +1017,223 @@ function toggleCardSelection(listNode, cardId, checked = true) {
   assert.ok(persisted.some((item) => item.title === 'Imported duplicate id'), 'expected imported record');
   assert.ok(persisted.some((item) => item.title === 'Imported archived' && item.archived), 'expected archived import');
 })();
+
+(function testMergeImportedOpportunitiesForUserRollsBackOnFailure() {
+  const records = [];
+  const deleteCalls = [];
+  let createCalls = 0;
+  const { mergeImportedOpportunitiesForUser } = loadDashboardModule({});
+
+  assert.throws(
+    () =>
+      mergeImportedOpportunitiesForUser(
+        'dev-user',
+        [
+          { title: 'First import' },
+          { title: 'Second import' },
+        ],
+        {
+          listOpportunitiesForUser: () => Array.from(records),
+          createOpportunityForUser: (_userId, seed) => {
+            createCalls += 1;
+            if (createCalls === 2) {
+              throw new Error('create failed');
+            }
+            const created = { ...seed, id: `created-${createCalls}` };
+            records.push(created);
+            return created;
+          },
+          archiveOpportunityForUser: () => {},
+          deleteOpportunityForUser: (_userId, opportunityId) => {
+            deleteCalls.push(opportunityId);
+            const index = records.findIndex((item) => item.id === opportunityId);
+            if (index >= 0) {
+              records.splice(index, 1);
+            }
+          },
+        }
+      ),
+    /create failed/
+  );
+
+  assert.strictEqual(records.length, 0, 'expected rollback to remove partially imported records');
+  assert.deepStrictEqual(deleteCalls, ['created-1']);
+})();
+
+(function testDashboardExportJsonControlShowsFeedbackAndDownloads() {
+  const model = loadOpportunityModel();
+  const storage = makeSessionStorage();
+  const userId = 'dev-user';
+  model.createOpportunityForUser(userId, { title: 'Export me', status: 'new' }, { storage });
+
+  const { win, doc, nodes } = makeDashboardHarness();
+  let capturedBlob = null;
+  let revokedUrl = null;
+
+  class FakeBlob {
+    constructor(parts = [], options = {}) {
+      this.parts = parts;
+      this.options = options;
+    }
+  }
+
+  win.URL = {
+    createObjectURL(blob) {
+      capturedBlob = blob;
+      return 'blob:test-export';
+    },
+    revokeObjectURL(url) {
+      revokedUrl = url;
+    },
+  };
+
+  const { initializeDashboard } = loadDashboardModule({
+    Blob: FakeBlob,
+    getMockSession: () => ({ userId, email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {},
+    listOpportunitiesForUser: (sessionUserId, options = {}) =>
+      model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+    createOpportunityForUser: (sessionUserId, seed) =>
+      model.createOpportunityForUser(sessionUserId, seed, { storage }),
+    updateOpportunityForUser: (sessionUserId, opportunityId, updates) =>
+      model.updateOpportunityForUser(sessionUserId, opportunityId, updates, { storage }),
+    archiveOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    deleteOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.deleteOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+  nodes.exportJsonButton.trigger('click');
+
+  assert.ok(capturedBlob, 'expected export button to create a JSON blob payload');
+  assert.strictEqual(revokedUrl, 'blob:test-export');
+  const serialized = String(capturedBlob.parts[0] || '');
+  const parsed = JSON.parse(serialized);
+  assert.strictEqual(parsed.opportunities.length, 1);
+  assert.strictEqual(nodes.transferFeedback.hidden, false);
+  assert.strictEqual(nodes.transferFeedback.textContent, 'Exported 1 opportunities to JSON.');
+  assert.strictEqual(nodes.transferFeedback.className, 'meta transfer-feedback');
+})();
+
+(function testDashboardImportControlOpensFilePickerAndResetsValue() {
+  const { win, doc, nodes } = makeDashboardHarness();
+  nodes.importJsonInput.value = 'stale-selection';
+  let pickerOpenCount = 0;
+  nodes.importJsonInput.click = () => {
+    pickerOpenCount += 1;
+  };
+
+  const { initializeDashboard } = loadDashboardModule({
+    getMockSession: () => ({ userId: 'dev-user', email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {},
+    listOpportunitiesForUser: () => [],
+    createOpportunityForUser: () => {},
+    updateOpportunityForUser: () => {},
+    archiveOpportunityForUser: () => {},
+    deleteOpportunityForUser: () => {},
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+  nodes.importJsonButton.trigger('click');
+
+  assert.strictEqual(nodes.importJsonInput.value, '', 'expected import click to clear stale file selection');
+  assert.strictEqual(pickerOpenCount, 1, 'expected import click to open file picker');
+})();
+
+pendingAsyncTests.push(
+  (async function testDashboardImportSuccessFeedbackAndMergeViaUI() {
+    const model = loadOpportunityModel();
+    const storage = makeSessionStorage();
+    const userId = 'dev-user';
+    model.createOpportunityForUser(userId, { title: 'Existing', status: 'new' }, { storage });
+
+    const { win, doc, nodes } = makeDashboardHarness();
+
+    const { initializeDashboard } = loadDashboardModule({
+      getMockSession: () => ({ userId, email: 'dev@example.com' }),
+      isMockAuthEnabled: () => false,
+      signOut: () => {},
+      listOpportunitiesForUser: (sessionUserId, options = {}) =>
+        model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+      createOpportunityForUser: (sessionUserId, seed) =>
+        model.createOpportunityForUser(sessionUserId, seed, { storage }),
+      updateOpportunityForUser: (sessionUserId, opportunityId, updates) =>
+        model.updateOpportunityForUser(sessionUserId, opportunityId, updates, { storage }),
+      archiveOpportunityForUser: (sessionUserId, opportunityId) =>
+        model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage }),
+      deleteOpportunityForUser: (sessionUserId, opportunityId) =>
+        model.deleteOpportunityForUser(sessionUserId, opportunityId, { storage }),
+      window: win,
+      document: doc,
+    });
+
+    initializeDashboard(win, doc);
+    nodes.importJsonInput.files = [
+      {
+        text: () =>
+          JSON.stringify({
+            opportunities: [{ title: 'Imported through UI', status: 'waiting' }],
+          }),
+      },
+    ];
+
+    await nodes.importJsonInput.trigger('change');
+
+    const persisted = model.listOpportunitiesForUser(userId, { includeArchived: true, storage });
+    assert.strictEqual(persisted.length, 2, 'expected imported item merged with existing records');
+    assert.strictEqual(nodes.transferFeedback.hidden, false);
+    assert.strictEqual(nodes.transferFeedback.textContent, 'Imported 1 opportunities (merged with existing data).');
+    assert.strictEqual(nodes.transferFeedback.className, 'meta transfer-feedback');
+    assert.strictEqual(nodes.summary.textContent, 'Active: 2 | Archived: 0 | Showing: 2');
+  })()
+);
+
+pendingAsyncTests.push(
+  (async function testDashboardImportInvalidShowsErrorAndKeepsState() {
+    const model = loadOpportunityModel();
+    const storage = makeSessionStorage();
+    const userId = 'dev-user';
+    model.createOpportunityForUser(userId, { title: 'Baseline', status: 'new' }, { storage });
+
+    const { win, doc, nodes } = makeDashboardHarness();
+
+    const { initializeDashboard } = loadDashboardModule({
+      getMockSession: () => ({ userId, email: 'dev@example.com' }),
+      isMockAuthEnabled: () => false,
+      signOut: () => {},
+      listOpportunitiesForUser: (sessionUserId, options = {}) =>
+        model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+      createOpportunityForUser: (sessionUserId, seed) =>
+        model.createOpportunityForUser(sessionUserId, seed, { storage }),
+      updateOpportunityForUser: (sessionUserId, opportunityId, updates) =>
+        model.updateOpportunityForUser(sessionUserId, opportunityId, updates, { storage }),
+      archiveOpportunityForUser: (sessionUserId, opportunityId) =>
+        model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage }),
+      deleteOpportunityForUser: (sessionUserId, opportunityId) =>
+        model.deleteOpportunityForUser(sessionUserId, opportunityId, { storage }),
+      window: win,
+      document: doc,
+    });
+
+    initializeDashboard(win, doc);
+    nodes.importJsonInput.files = [{ text: () => '{invalid-json' }];
+
+    await nodes.importJsonInput.trigger('change');
+
+    const persisted = model.listOpportunitiesForUser(userId, { includeArchived: true, storage });
+    assert.strictEqual(persisted.length, 1, 'expected invalid import to keep existing records unchanged');
+    assert.strictEqual(nodes.transferFeedback.hidden, false);
+    assert.strictEqual(nodes.transferFeedback.className, 'meta transfer-feedback transfer-feedback--error');
+    assert.strictEqual(nodes.transferFeedback.textContent, 'Import failed: Invalid JSON.');
+  })()
+);
 
 (function testFilterOpportunityItemsByViewAndStatus() {
   const { filterOpportunityItems } = loadDashboardModule({});
@@ -1770,5 +2005,12 @@ function toggleCardSelection(listNode, cardId, checked = true) {
   assert.strictEqual(model.listOpportunitiesForUser(userId, { includeArchived: true, storage }).length, 0);
 })();
 
-console.log('test placeholder: pass');
+Promise.all(pendingAsyncTests)
+  .then(() => {
+    console.log('test placeholder: pass');
+  })
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
 // scripts/node-test-placeholder.js EOF
