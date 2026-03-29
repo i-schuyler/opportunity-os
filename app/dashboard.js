@@ -126,33 +126,50 @@ export function mergeImportedOpportunitiesForUser(
     listOpportunitiesForUser,
     createOpportunityForUser,
     archiveOpportunityForUser,
+    deleteOpportunityForUser,
   }
 ) {
   const existing = dependencies.listOpportunitiesForUser(userId, { includeArchived: true });
   const existingIds = new Set(existing.map((item) => String(item.id || '').trim()).filter(Boolean));
   let importedCount = 0;
+  const createdIds = [];
 
-  importedOpportunities.forEach((seed) => {
-    const normalized = normalizeTransferOpportunity(seed);
-    const createSeed = {
-      ...normalized,
-      archived: false,
-    };
+  try {
+    importedOpportunities.forEach((seed) => {
+      const normalized = normalizeTransferOpportunity(seed);
+      const createSeed = {
+        ...normalized,
+        archived: false,
+      };
 
-    if (createSeed.id && existingIds.has(createSeed.id)) {
-      delete createSeed.id;
-    }
-
-    const created = dependencies.createOpportunityForUser(userId, createSeed);
-    importedCount += 1;
-
-    if (created && created.id) {
-      existingIds.add(String(created.id));
-      if (normalized.archived) {
-        dependencies.archiveOpportunityForUser(userId, created.id);
+      if (createSeed.id && existingIds.has(createSeed.id)) {
+        delete createSeed.id;
       }
+
+      const created = dependencies.createOpportunityForUser(userId, createSeed);
+      importedCount += 1;
+
+      if (created && created.id) {
+        const createdId = String(created.id);
+        createdIds.push(createdId);
+        existingIds.add(createdId);
+        if (normalized.archived) {
+          dependencies.archiveOpportunityForUser(userId, created.id);
+        }
+      }
+    });
+  } catch (error) {
+    if (typeof dependencies.deleteOpportunityForUser === 'function') {
+      createdIds.forEach((createdId) => {
+        try {
+          dependencies.deleteOpportunityForUser(userId, createdId);
+        } catch {
+          // Preserve the original import error; rollback is best-effort.
+        }
+      });
     }
-  });
+    throw error;
+  }
 
   return importedCount;
 }
