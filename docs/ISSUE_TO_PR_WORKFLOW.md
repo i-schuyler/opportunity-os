@@ -23,6 +23,10 @@
 - unauthorized or unrelated comment on a codex-labeled issue: no Codex run
 - authorized `/codex` or `/retry`: Codex run starts
 
+## Optional per-issue effort
+- Add `Recommended effort: low` (or `medium` / `high`) as a plain-text issue-body line to override effort for that issue.
+- Resolution order: valid issue-body value -> repo `CODEX_EFFORT` variable -> default `medium`.
+
 ## Recovery when nothing seems to happen
 1. Check Actions tab for `codex-issue-to-pr`.
 2. If the issue predated the workflow, comment `/retry` or `/codex`.

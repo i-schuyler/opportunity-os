@@ -75,6 +75,18 @@ jobs:
           CODEX_EFFORT_VALUE: ${{ vars.CODEX_EFFORT || 'medium' }}
           CODEX_BRANCH_PREFIX_VALUE: ${{ vars.CODEX_BRANCH_PREFIX || 'codex' }}
         run: |
+          resolved_effort="$CODEX_EFFORT_VALUE"
+          effort_source="repo-default"
+          effort_line=$(printf '%s\n' "$ISSUE_BODY_VALUE" | grep -Eim1 '^[[:space:]]*recommended[[:space:]]+effort[[:space:]]*:[[:space:]]*[^[:space:]]+[[:space:]]*$' || true)
+          issue_effort=$(printf '%s\n' "$effort_line" | sed -E 's/^[[:space:]]*[Rr][Ee][Cc][Oo][Mm][Mm][Ee][Nn][Dd][Ee][Dd][[:space:]]+[Ee][Ff][Ff][Oo][Rr][Tt][[:space:]]*:[[:space:]]*([^[:space:]]+)[[:space:]]*$/\1/' | tr '[:upper:]' '[:lower:]')
+          case "$issue_effort" in
+            low|medium|high)
+              resolved_effort="$issue_effort"
+              effort_source="issue-body"
+              ;;
+          esac
+          echo "Resolved CODEX_EFFORT source: $effort_source"
+          echo "Resolved CODEX_EFFORT value: $resolved_effort"
           {
             printf 'ISSUE_NUMBER=%s\n' "$ISSUE_NUMBER_VALUE"
             printf 'ISSUE_TITLE=%s\n' "$ISSUE_TITLE_VALUE"
@@ -87,7 +99,7 @@ jobs:
             printf 'DEFAULT_BRANCH=%s\n' "$DEFAULT_BRANCH_VALUE"
             printf 'CODEX_ALLOWED_USERS=%s\n' "$CODEX_ALLOWED_USERS_VALUE"
             printf 'CODEX_MODEL=%s\n' "$CODEX_MODEL_VALUE"
-            printf 'CODEX_EFFORT=%s\n' "$CODEX_EFFORT_VALUE"
+            printf 'CODEX_EFFORT=%s\n' "$resolved_effort"
             printf 'CODEX_BRANCH_PREFIX=%s\n' "$CODEX_BRANCH_PREFIX_VALUE"
           } >> "$GITHUB_ENV"
 
