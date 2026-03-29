@@ -374,7 +374,7 @@ function testOpportunityItem(source_link, overrides = {}) {
   };
 }
 
-function makeDashboardHarness({ storedFilters = null } = {}) {
+function makeDashboardHarness({ storedFilters = null, withForm = false, formValues = {} } = {}) {
   const storageKey = 'opportunityOsDashboardFilters';
   const storage = makeSessionStorage(
     storedFilters
@@ -409,7 +409,16 @@ function makeDashboardHarness({ storedFilters = null } = {}) {
     importJsonButton: new FakeElement('button'),
     importJsonInput: new FakeElement('input'),
     transferFeedback: new FakeElement('p'),
+    form: withForm ? new FakeElement('form') : null,
+    saveOpportunityButton: withForm ? new FakeElement('button') : null,
+    cancelEditButton: withForm ? new FakeElement('button') : null,
   };
+  if (nodes.form) {
+    nodes.form._formValues = { ...formValues };
+    nodes.form.reset = () => {
+      nodes.form._formValues = {};
+    };
+  }
   nodes.subscriptionFeedback.hidden = true;
   nodes.nextBestActionLockMessage.hidden = true;
 
@@ -438,9 +447,9 @@ function makeDashboardHarness({ storedFilters = null } = {}) {
     'import-json-button': nodes.importJsonButton,
     'import-json-input': nodes.importJsonInput,
     'transfer-feedback': nodes.transferFeedback,
-    'opportunity-form': null,
-    'save-opportunity-button': null,
-    'cancel-edit-button': null,
+    'opportunity-form': nodes.form,
+    'save-opportunity-button': nodes.saveOpportunityButton,
+    'cancel-edit-button': nodes.cancelEditButton,
     'sign-out-button': null,
   };
 
@@ -1220,6 +1229,120 @@ function toggleCardSelection(listNode, cardId, checked = true) {
 
   assert.strictEqual(nodes.importJsonInput.value, '', 'expected import click to clear stale file selection');
   assert.strictEqual(pickerOpenCount, 1, 'expected import click to open file picker');
+})();
+
+(function testDashboardFreePlanCreateSubmitBlockedAtLimit() {
+  const model = loadOpportunityModel();
+  const storage = makeSessionStorage();
+  const userId = 'dev-user';
+  Array.from({ length: 10 }, (_, index) =>
+    model.createOpportunityForUser(userId, { title: `Seed ${index + 1}`, status: 'new' }, { storage })
+  );
+
+  const { win, doc, nodes } = makeDashboardHarness({
+    withForm: true,
+    formValues: {
+      id: '',
+      title: 'Blocked create attempt',
+      type: 'general',
+      source_link: '',
+      contact: '',
+      deadline: '',
+      status: 'new',
+      notes: '',
+      tags: '',
+    },
+  });
+  win.location.search = '?mockAuth=1';
+  let createCalls = 0;
+
+  const { initializeDashboard } = loadDashboardModule({
+    FormData: class FakeFormData {
+      constructor(form) {
+        this.form = form;
+      }
+      get(key) {
+        return this.form && this.form._formValues ? this.form._formValues[key] : '';
+      }
+    },
+    getMockSession: () => ({ userId, email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {},
+    listOpportunitiesForUser: (sessionUserId, options = {}) =>
+      model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+    createOpportunityForUser: (sessionUserId, seed) => {
+      createCalls += 1;
+      return model.createOpportunityForUser(sessionUserId, seed, { storage });
+    },
+    updateOpportunityForUser: (sessionUserId, opportunityId, updates) =>
+      model.updateOpportunityForUser(sessionUserId, opportunityId, updates, { storage }),
+    archiveOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    deleteOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.deleteOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+  nodes.form.trigger('submit');
+
+  assert.strictEqual(createCalls, 0, 'expected create submit path to block at free-tier limit');
+  assert.ok(
+    nodes.subscriptionFeedback.textContent.includes('Free plan supports up to 10 active opportunities'),
+    'expected free-tier limit feedback when create is blocked'
+  );
+})();
+
+(function testDashboardFreePlanExportAndImportHandlersAreHardBlocked() {
+  const model = loadOpportunityModel();
+  const storage = makeSessionStorage();
+  const userId = 'dev-user';
+  model.createOpportunityForUser(userId, { title: 'Baseline', status: 'new' }, { storage });
+
+  const { win, doc, nodes } = makeDashboardHarness();
+  win.location.search = '?mockAuth=1';
+  let createObjectUrlCalls = 0;
+  let pickerOpenCount = 0;
+  win.URL = {
+    createObjectURL() {
+      createObjectUrlCalls += 1;
+      return 'blob:should-not-be-used';
+    },
+    revokeObjectURL() {},
+  };
+  nodes.importJsonInput.click = () => {
+    pickerOpenCount += 1;
+  };
+
+  const { initializeDashboard } = loadDashboardModule({
+    getMockSession: () => ({ userId, email: 'dev@example.com' }),
+    isMockAuthEnabled: () => false,
+    signOut: () => {},
+    listOpportunitiesForUser: (sessionUserId, options = {}) =>
+      model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+    createOpportunityForUser: (sessionUserId, seed) =>
+      model.createOpportunityForUser(sessionUserId, seed, { storage }),
+    updateOpportunityForUser: (sessionUserId, opportunityId, updates) =>
+      model.updateOpportunityForUser(sessionUserId, opportunityId, updates, { storage }),
+    archiveOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    deleteOpportunityForUser: (sessionUserId, opportunityId) =>
+      model.deleteOpportunityForUser(sessionUserId, opportunityId, { storage }),
+    window: win,
+    document: doc,
+  });
+
+  initializeDashboard(win, doc);
+  nodes.exportJsonButton.trigger('click');
+  assert.strictEqual(createObjectUrlCalls, 0, 'expected free-plan export handler to hard-block blob generation');
+  assert.strictEqual(nodes.transferFeedback.textContent, 'Import/export is available on paid plans.');
+  assert.strictEqual(nodes.transferFeedback.className, 'meta transfer-feedback transfer-feedback--error');
+
+  nodes.importJsonButton.trigger('click');
+  assert.strictEqual(pickerOpenCount, 0, 'expected free-plan import handler to hard-block file picker open');
+  assert.strictEqual(nodes.transferFeedback.textContent, 'Import/export is available on paid plans.');
+  assert.strictEqual(nodes.transferFeedback.className, 'meta transfer-feedback transfer-feedback--error');
 })();
 
 pendingAsyncTests.push(

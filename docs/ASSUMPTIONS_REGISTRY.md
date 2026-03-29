@@ -29,4 +29,4 @@
 - [TENTATIVE] Dashboard JSON import merges opportunities into existing user data (append behavior) rather than replacing stored records.
 - [TENTATIVE] Dashboard next-best-action guidance is limited to at most three active opportunities, prioritized deterministically by overdue, due soon, new, then waiting without a near-term deadline.
 - [TENTATIVE] Dashboard onboarding checklist marks `Review next best actions` complete when at least one active opportunity produces a next-best-action suggestion.
-- [TENTATIVE] Subscription boundary is local/mock-safe for now: dashboard plan gating defaults to free and is only overridden via `?mockPlan=paid` in the URL query.
+- [TENTATIVE] Subscription boundary is local/mock-safe for now: dashboard plan gating defaults to free and is only overridden when mock mode is explicitly enabled (for example `?mockAuth=1&mockPlan=paid`).
