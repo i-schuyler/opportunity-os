@@ -31,6 +31,10 @@ const DEFAULT_DASHBOARD_FILTERS = {
 const SUBSCRIPTION_PLAN_FREE = 'free';
 const SUBSCRIPTION_PLAN_PAID = 'paid';
 const FREE_TIER_OPPORTUNITY_LIMIT = 10;
+const ENTITLEMENT_STATE_FREE = 'free';
+const ENTITLEMENT_STATE_PAID_SUBSCRIPTION_ACTIVE = 'paid_subscription_active';
+const ENTITLEMENT_STATE_PAID_FOUNDER_LIFETIME = 'paid_founder_lifetime';
+const ENTITLEMENT_STATE_UNKNOWN = 'unknown';
 
 function normalizeSubscriptionPlan(value) {
   const normalized = String(value || '').trim().toLowerCase();
@@ -49,6 +53,124 @@ export function resolveLocalSubscriptionState(win = window) {
     isPaid,
     freeOpportunityLimit: FREE_TIER_OPPORTUNITY_LIMIT,
   };
+}
+
+function buildFreeSubscriptionState(source = 'server-default') {
+  return {
+    plan: SUBSCRIPTION_PLAN_FREE,
+    isPaid: false,
+    freeOpportunityLimit: FREE_TIER_OPPORTUNITY_LIMIT,
+    entitlementState: source === 'server-unknown' ? ENTITLEMENT_STATE_UNKNOWN : ENTITLEMENT_STATE_FREE,
+    source,
+  };
+}
+
+function normalizeEntitlementState(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (
+    normalized === ENTITLEMENT_STATE_FREE ||
+    normalized === ENTITLEMENT_STATE_PAID_SUBSCRIPTION_ACTIVE ||
+    normalized === ENTITLEMENT_STATE_PAID_FOUNDER_LIFETIME
+  ) {
+    return normalized;
+  }
+  return ENTITLEMENT_STATE_UNKNOWN;
+}
+
+async function resolveServerSubscriptionState(session, win = window) {
+  const fallbackState = buildFreeSubscriptionState('server-unknown');
+
+  if (!session || !session.userId || !win || typeof win.fetch !== 'function') {
+    return fallbackState;
+  }
+
+  try {
+    const response = await win.fetch('/api/entitlements', {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        'X-Opportunity-Os-User-Id': String(session.userId),
+      },
+    });
+
+    if (!response.ok) {
+      return fallbackState;
+    }
+
+    const payload = await response.json();
+    const entitlementState = normalizeEntitlementState(payload && payload.entitlementState);
+    const isPaid =
+      entitlementState === ENTITLEMENT_STATE_PAID_SUBSCRIPTION_ACTIVE ||
+      entitlementState === ENTITLEMENT_STATE_PAID_FOUNDER_LIFETIME;
+
+    if (entitlementState === ENTITLEMENT_STATE_UNKNOWN) {
+      return fallbackState;
+    }
+
+    return {
+      plan: isPaid ? SUBSCRIPTION_PLAN_PAID : SUBSCRIPTION_PLAN_FREE,
+      isPaid,
+      freeOpportunityLimit: FREE_TIER_OPPORTUNITY_LIMIT,
+      entitlementState,
+      source: 'server',
+    };
+  } catch {
+    return fallbackState;
+  }
+}
+
+async function createMonthlyCheckoutRedirect(session, win = window) {
+  if (!session || !session.userId) {
+    return {
+      ok: false,
+      error: 'Missing signed-in user context for checkout.',
+    };
+  }
+
+  if (!win || typeof win.fetch !== 'function') {
+    return {
+      ok: false,
+      error: 'Checkout is unavailable right now. Please try again shortly.',
+    };
+  }
+
+  try {
+    const response = await win.fetch('/api/billing/checkout-session', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'X-Opportunity-Os-User-Id': String(session.userId),
+      },
+      body: JSON.stringify({}),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return {
+        ok: false,
+        error: String((payload && payload.error) || 'Unable to start checkout right now.'),
+      };
+    }
+
+    const checkoutUrl = String(payload && payload.checkoutUrl ? payload.checkoutUrl : '').trim();
+    if (!checkoutUrl) {
+      return {
+        ok: false,
+        error: 'Checkout is unavailable right now. Please try again shortly.',
+      };
+    }
+
+    return {
+      ok: true,
+      checkoutUrl,
+    };
+  } catch {
+    return {
+      ok: false,
+      error: 'Checkout is unavailable right now. Please try again shortly.',
+    };
+  }
 }
 
 export function buildSubscriptionBoundaryState(allItems = [], subscriptionState = resolveLocalSubscriptionState()) {
@@ -1093,7 +1215,11 @@ export function initializeDashboard(win = window, doc = document) {
   const cancelEditButton = doc.getElementById('cancel-edit-button');
   const signOutButton = doc.getElementById('sign-out-button');
   const filterState = readDashboardFilters(win);
-  const subscriptionState = resolveLocalSubscriptionState(win);
+  const params = new URLSearchParams((win && win.location && win.location.search) || '');
+  const isMockModeEnabled =
+    params.get('mockAuth') === '1' || Boolean(win && win.OPPORTUNITY_OS_ENABLE_MOCK_AUTH === true);
+  const isMockPreviewEnabled = isMockModeEnabled && params.has('mockPlan');
+  let subscriptionState = isMockPreviewEnabled ? resolveLocalSubscriptionState(win) : buildFreeSubscriptionState('server-pending');
   const selectedIds = new Set();
   let visibleIds = [];
 
@@ -1374,6 +1500,13 @@ export function initializeDashboard(win = window, doc = document) {
   }
 
   renderList();
+
+  if (!isMockPreviewEnabled) {
+    Promise.resolve(resolveServerSubscriptionState(session, win)).then((resolvedState) => {
+      subscriptionState = resolvedState;
+      renderList();
+    });
+  }
 
   if (viewFilterNode) {
     viewFilterNode.value = filterState.view;
@@ -1689,17 +1822,34 @@ export function initializeDashboard(win = window, doc = document) {
   }
 
   if (upgradeCtaButton) {
-    upgradeCtaButton.addEventListener('click', () => {
+    upgradeCtaButton.addEventListener('click', async () => {
       const boundaryState = buildSubscriptionBoundaryState(
         listOpportunitiesForUser(session.userId, { includeArchived: true }),
         subscriptionState
       );
       if (boundaryState.isPaid) {
         setSubscriptionFeedback('Paid plan is already active.');
-      } else {
+        return;
+      }
+
+      if (isMockPreviewEnabled) {
         setSubscriptionFeedback(
           'Upgrade flow is not wired yet. Local mock mode only: use ?mockAuth=1&mockPlan=paid to preview paid surfaces.'
         );
+        return;
+      }
+
+      setSubscriptionFeedback('Redirecting to secure monthly checkout...');
+      const checkoutResult = await createMonthlyCheckoutRedirect(session, win);
+      if (!checkoutResult.ok) {
+        setSubscriptionFeedback(checkoutResult.error, true);
+        return;
+      }
+
+      if (win && win.location && typeof win.location.assign === 'function') {
+        win.location.assign(checkoutResult.checkoutUrl);
+      } else {
+        setSubscriptionFeedback('Checkout URL is ready but navigation is unavailable in this environment.', true);
       }
     });
   }
