@@ -75,7 +75,7 @@ function loadDashboardModule(mocks) {
     '\n'
   );
   source +=
-    '\nmodule.exports = { initializeDashboard, buildCard, buildSampleOpportunitySeeds, normalizeSafeSourceLink, normalizeDashboardFilters, deriveStatusOptions, deriveBulkStatusOptions, filterOpportunityItems, sortOpportunityItems, classifyDeadlineUrgency, buildNextBestActions, buildOpportunityExportPayload, parseOpportunityImportPayload, mergeImportedOpportunitiesForUser };\n';
+    '\nmodule.exports = { initializeDashboard, buildCard, buildSampleOpportunitySeeds, normalizeSafeSourceLink, normalizeDashboardFilters, deriveStatusOptions, deriveBulkStatusOptions, filterOpportunityItems, sortOpportunityItems, classifyDeadlineUrgency, buildNextBestActions, buildDashboardChecklist, buildOpportunityExportPayload, parseOpportunityImportPayload, mergeImportedOpportunitiesForUser };\n';
 
   const context = {
     ...mocks,
@@ -387,6 +387,8 @@ function makeDashboardHarness({ storedFilters = null } = {}) {
     sortFilter: new FakeElement('select'),
     nextBestActionSummary: new FakeElement('p'),
     nextBestActionList: new FakeElement('ul'),
+    onboardingChecklistSummary: new FakeElement('p'),
+    onboardingChecklistList: new FakeElement('ul'),
     summary: new FakeElement('p'),
     bulkActions: new FakeElement('div'),
     selectedSummary: new FakeElement('p'),
@@ -407,6 +409,8 @@ function makeDashboardHarness({ storedFilters = null } = {}) {
     'filter-sort': nodes.sortFilter,
     'next-best-action-summary': nodes.nextBestActionSummary,
     'next-best-action-list': nodes.nextBestActionList,
+    'onboarding-checklist-summary': nodes.onboardingChecklistSummary,
+    'onboarding-checklist-list': nodes.onboardingChecklistList,
     'filter-summary': nodes.summary,
     'bulk-actions': nodes.bulkActions,
     'selected-summary': nodes.selectedSummary,
@@ -724,6 +728,12 @@ function toggleCardSelection(listNode, cardId, checked = true) {
     'expected practical onboarding suggestion'
   );
   assert.ok(sampleButton, 'expected sample-data action in first-run empty state');
+  assert.strictEqual(nodes.onboardingChecklistSummary.textContent, 'No checklist steps completed yet. Start with one opportunity.');
+  assert.strictEqual(nodes.onboardingChecklistList.children.length, 5, 'expected all checklist items to render');
+  assert.ok(
+    nodes.onboardingChecklistList.children.every((itemNode) => itemNode.dataset.completed === '0'),
+    'expected first-run checklist to show pending states'
+  );
 })();
 
 (function testDashboardSampleDataActionPopulatesAndRenders() {
@@ -770,6 +780,11 @@ function toggleCardSelection(listNode, cardId, checked = true) {
 
   assert.strictEqual(renderedCardIds(nodes.list).length, 3, 'expected active sample records in active view');
   assert.strictEqual(nodes.summary.textContent, 'Active: 3 | Archived: 1 | Showing: 3');
+  assert.strictEqual(nodes.onboardingChecklistSummary.textContent, '5 of 5 checklist steps complete.');
+  assert.ok(
+    nodes.onboardingChecklistList.children.every((itemNode) => itemNode.dataset.completed === '1'),
+    'expected sample data to satisfy checklist steps'
+  );
 
   const renderedStatuses = Array.from(
     nodes.statusFilter.children
@@ -1503,6 +1518,71 @@ pendingAsyncTests.push(
     second.map((item) => item.id),
     ['a-id', 'b-id', 'c-id']
   );
+})();
+
+(function testBuildDashboardChecklistCompletionFromData() {
+  const { buildDashboardChecklist } = loadDashboardModule({});
+
+  const checklist = buildDashboardChecklist(
+    [
+      {
+        id: 'opp-1',
+        title: 'First',
+        archived: false,
+        status: 'in progress',
+        deadline: '2026-04-20',
+        notes: 'Follow up with contact tomorrow',
+        contact: 'person@example.com',
+      },
+    ],
+    Date.parse('2026-04-18T12:00:00.000Z')
+  );
+
+  assert.strictEqual(checklist.totalCount, 5);
+  assert.strictEqual(checklist.completedCount, 5);
+  assert.ok(checklist.checklistItems.every((item) => item.completed), 'expected all checklist steps complete');
+})();
+
+(function testBuildDashboardChecklistIncompleteStateIsCalm() {
+  const { buildDashboardChecklist } = loadDashboardModule({});
+
+  const checklist = buildDashboardChecklist([]);
+  assert.strictEqual(checklist.totalCount, 5);
+  assert.strictEqual(checklist.completedCount, 0);
+  assert.ok(
+    checklist.checklistItems.every((item) => !item.completed),
+    'expected each checklist step to remain pending when no data exists'
+  );
+})();
+
+(function testBuildDashboardChecklistDeterministic() {
+  const { buildDashboardChecklist } = loadDashboardModule({});
+
+  const items = [
+    {
+      id: 'one',
+      title: 'One',
+      archived: false,
+      status: 'waiting',
+      deadline: '2026-04-20',
+      notes: '',
+      contact: '',
+    },
+    {
+      id: 'two',
+      title: 'Two',
+      archived: true,
+      status: 'new',
+      deadline: '',
+      notes: 'Archived note',
+      contact: '',
+    },
+  ];
+
+  const first = buildDashboardChecklist(items, Date.parse('2026-04-10T12:00:00.000Z'));
+  const second = buildDashboardChecklist(items, Date.parse('2026-04-10T12:00:00.000Z'));
+
+  assert.strictEqual(JSON.stringify(first), JSON.stringify(second));
 })();
 
 (function testDashboardNextBestActionsFallbackIsCalm() {

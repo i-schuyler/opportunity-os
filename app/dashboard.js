@@ -676,6 +676,64 @@ export function buildNextBestActions(items = [], now = Date.now()) {
     }));
 }
 
+function hasMeaningfulContact(item) {
+  return String(item.contact || '').trim().length > 0;
+}
+
+function hasMeaningfulNotes(item) {
+  return String(item.notes || '').trim().length > 0;
+}
+
+function hasValidDeadline(item) {
+  const rawDeadline = String(item.deadline || '').trim();
+  if (!rawDeadline) {
+    return false;
+  }
+  return !Number.isNaN(Date.parse(rawDeadline));
+}
+
+export function buildDashboardChecklist(items = [], now = Date.now()) {
+  const allItems = Array.isArray(items) ? items : [];
+  const activeItems = allItems.filter((item) => !item.archived);
+  const actionableSuggestions = buildNextBestActions(allItems, now);
+
+  const checklistItems = [
+    {
+      key: 'first_opportunity',
+      label: 'Add your first opportunity',
+      completed: allItems.length > 0,
+    },
+    {
+      key: 'notes_or_contact',
+      label: 'Add notes or contact info to an opportunity',
+      completed: allItems.some((item) => hasMeaningfulNotes(item) || hasMeaningfulContact(item)),
+    },
+    {
+      key: 'set_deadline',
+      label: 'Set a deadline',
+      completed: allItems.some((item) => hasValidDeadline(item)),
+    },
+    {
+      key: 'update_status',
+      label: 'Update a status',
+      completed: allItems.some((item) => normalizeStatusValue(item.status) && normalizeStatusValue(item.status) !== 'new'),
+    },
+    {
+      key: 'review_next_best_actions',
+      label: 'Review next best actions',
+      completed: activeItems.length > 0 && actionableSuggestions.length > 0,
+    },
+  ];
+
+  const completedCount = checklistItems.filter((item) => item.completed).length;
+
+  return {
+    checklistItems,
+    completedCount,
+    totalCount: checklistItems.length,
+  };
+}
+
 export function sortOpportunityItems(items = [], sortMode = SORT_MODE_NEAREST_DEADLINE) {
   const normalizedSortMode = DASHBOARD_SORT_MODES.has(sortMode)
     ? sortMode
@@ -971,6 +1029,8 @@ export function initializeDashboard(win = window, doc = document) {
   const sortFilterNode = doc.getElementById('filter-sort');
   const nextBestActionSummaryNode = doc.getElementById('next-best-action-summary');
   const nextBestActionListNode = doc.getElementById('next-best-action-list');
+  const onboardingChecklistSummaryNode = doc.getElementById('onboarding-checklist-summary');
+  const onboardingChecklistListNode = doc.getElementById('onboarding-checklist-list');
   const summaryNode = doc.getElementById('filter-summary');
   const bulkActionsNode = doc.getElementById('bulk-actions');
   const selectedSummaryNode = doc.getElementById('selected-summary');
@@ -1034,6 +1094,40 @@ export function initializeDashboard(win = window, doc = document) {
     }
   }
 
+  function renderOnboardingChecklist(allItems = []) {
+    if (!onboardingChecklistListNode) {
+      return;
+    }
+
+    const checklist = buildDashboardChecklist(allItems);
+    onboardingChecklistListNode.replaceChildren();
+
+    checklist.checklistItems.forEach((entry) => {
+      const itemNode = doc.createElement('li');
+      itemNode.className = entry.completed
+        ? 'onboarding-checklist-item onboarding-checklist-item--complete'
+        : 'onboarding-checklist-item';
+      itemNode.dataset.completed = entry.completed ? '1' : '0';
+
+      const statusNode = doc.createElement('span');
+      statusNode.className = 'onboarding-checklist-item__status';
+      statusNode.textContent = entry.completed ? 'Complete' : 'Pending';
+
+      const labelNode = doc.createElement('span');
+      labelNode.textContent = entry.label;
+
+      itemNode.append(statusNode, labelNode);
+      onboardingChecklistListNode.append(itemNode);
+    });
+
+    if (onboardingChecklistSummaryNode) {
+      onboardingChecklistSummaryNode.textContent =
+        checklist.completedCount > 0
+          ? `${checklist.completedCount} of ${checklist.totalCount} checklist steps complete.`
+          : 'No checklist steps completed yet. Start with one opportunity.';
+    }
+  }
+
   function renderList() {
     if (!listNode) {
       return;
@@ -1041,6 +1135,7 @@ export function initializeDashboard(win = window, doc = document) {
 
     const allItems = listOpportunitiesForUser(session.userId, { includeArchived: true });
     renderNextBestActions(allItems);
+    renderOnboardingChecklist(allItems);
     const activeCount = allItems.filter((item) => !item.archived).length;
     const archivedCount = allItems.length - activeCount;
     const statusOptions = deriveStatusOptions(allItems);
