@@ -360,6 +360,30 @@ pendingAsyncTests.push(
 );
 
 pendingAsyncTests.push(
+  (async function testBillingRoutesUnsetModeDefaultsToNonRealBehavior() {
+    const billing = loadBillingRuntimeModule();
+    const routes = loadBillingApiRoutesModule(billing);
+    const store = billing.createInMemoryBillingStore();
+
+    const handler = routes.createBillingApiRequestHandler({
+      store,
+      runtimeEnv: { process: { env: {} } },
+      getAuthenticatedUserId: () => 'dev-user',
+      baseUrl: 'https://app.example.test',
+      webhookVerifier: ({ rawBody }) => JSON.parse(rawBody),
+    });
+
+    const entitlementResponse = await handler({
+      method: 'GET',
+      path: routes.BILLING_API_PATHS.ENTITLEMENTS,
+      session: { userId: 'dev-user' },
+    });
+    assert.strictEqual(entitlementResponse.status, 200);
+    assert.strictEqual(entitlementResponse.body.entitlementState, 'free');
+  })()
+);
+
+pendingAsyncTests.push(
   (async function testBillingRoutesFailClosedWithoutPersistentStoreInRealMode() {
     const billing = loadBillingRuntimeModule();
     const routes = loadBillingApiRoutesModule(billing);
