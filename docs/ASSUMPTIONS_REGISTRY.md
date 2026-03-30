@@ -31,4 +31,5 @@
 - [TENTATIVE] Dashboard onboarding checklist marks `Review next best actions` complete when at least one active opportunity produces a next-best-action suggestion.
 - [TENTATIVE] Subscription boundary is local/mock-safe for now: dashboard plan gating defaults to free and is only overridden when mock mode is explicitly enabled (for example `?mockAuth=1&mockPlan=paid`).
 - [TENTATIVE] In real billing rollout, entitlement lookup source of truth should be server-side per authenticated user; missing/unknown entitlement state should fail closed to free access.
+- [TENTATIVE] Billing runtime mode contract is fail-closed by default: explicit real/prod-like modes require a persistent billing store, and unset mode is tolerated only in explicit local test harness paths.
 - [TENTATIVE] Founder lifetime first-50 enforcement may start as an auditable manual operator gate before any automated cap logic is introduced.
