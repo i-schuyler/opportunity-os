@@ -126,7 +126,7 @@ function loadBillingRuntimeModule() {
   source = source.replace(/export function\s+/g, 'function ');
   source = source.replace(/export const\s+/g, 'const ');
   source +=
-    '\nmodule.exports = { createInMemoryBillingStore, toSubscriptionState, readEntitlementForUser, createMonthlyCheckoutSession, applyWebhookEvent, createBillingRuntime, createStripeCheckoutAdapter, BILLING_ENTITLEMENT_STATES };\n';
+    '\nmodule.exports = { createInMemoryBillingStore, createPersistentBillingStore, toSubscriptionState, readEntitlementForUser, createMonthlyCheckoutSession, applyWebhookEvent, createBillingRuntime, createStripeCheckoutAdapter, BILLING_ENTITLEMENT_STATES };\n';
 
   const context = {
     module: { exports: {} },
@@ -147,7 +147,7 @@ function loadBillingApiRoutesModule(runtimeModule) {
   source = source.replace(/^import[\s\S]*?;\n/gm, '');
   source = source.replace(/export function\s+/g, 'function ');
   source = source.replace(/export const\s+/g, 'const ');
-  source += '\nmodule.exports = { BILLING_API_PATHS, createBillingApiRequestHandler, createEnvStripeCheckoutAdapter };\n';
+  source += '\nmodule.exports = { BILLING_API_PATHS, createBillingApiRequestHandler, createEnvStripeCheckoutAdapter, createEnvPersistentBillingStore };\n';
 
   const context = {
     ...runtimeModule,
@@ -187,10 +187,18 @@ pendingAsyncTests.push(
   (async function testBillingCheckoutSessionAndWebhookRuntimePaths() {
     const billing = loadBillingRuntimeModule();
     const routes = loadBillingApiRoutesModule(billing);
-    const store = billing.createInMemoryBillingStore();
+    let persistedState = {};
+    const store = billing.createPersistentBillingStore({
+      readState: () => persistedState,
+      writeState: (nextState) => {
+        persistedState = JSON.parse(JSON.stringify(nextState));
+      },
+    });
 
     const handler = routes.createBillingApiRequestHandler({
       store,
+      operationMode: 'production',
+      getAuthenticatedUserId: (request) => (request && request.session && request.session.userId) || '',
       baseUrl: 'https://app.example.test',
       webhookVerifier: ({ rawBody }) => JSON.parse(rawBody),
       stripeAdapter: {
@@ -210,7 +218,7 @@ pendingAsyncTests.push(
     const entitlementResponse = await handler({
       method: 'GET',
       path: routes.BILLING_API_PATHS.ENTITLEMENTS,
-      headers: { 'x-opportunity-os-user-id': 'dev-user' },
+      session: { userId: 'dev-user' },
     });
     assert.strictEqual(entitlementResponse.status, 200);
     assert.strictEqual(entitlementResponse.body.entitlementState, 'free');
@@ -218,7 +226,7 @@ pendingAsyncTests.push(
     const checkoutResponse = await handler({
       method: 'POST',
       path: routes.BILLING_API_PATHS.CHECKOUT_SESSION,
-      headers: { 'x-opportunity-os-user-id': 'dev-user' },
+      session: { userId: 'dev-user' },
       body: '{}',
     });
     assert.strictEqual(checkoutResponse.status, 200);
@@ -281,6 +289,97 @@ pendingAsyncTests.push(
     const freeAgainEntitlement = billing.readEntitlementForUser(store, 'dev-user');
     assert.strictEqual(freeAgainEntitlement.entitlementState, 'free');
     assert.strictEqual(freeAgainEntitlement.isPaid, false);
+  })()
+);
+
+pendingAsyncTests.push(
+  (async function testBillingRoutesRejectMissingAuthAndIgnoreClientUserHeader() {
+    const billing = loadBillingRuntimeModule();
+    const routes = loadBillingApiRoutesModule(billing);
+    const store = billing.createInMemoryBillingStore();
+
+    const handler = routes.createBillingApiRequestHandler({
+      store,
+      operationMode: 'development',
+      getAuthenticatedUserId: () => '',
+      baseUrl: 'https://app.example.test',
+      stripeAdapter: {
+        async createMonthlyCheckoutSession() {
+          throw new Error('should not be reached without trusted auth');
+        },
+      },
+      webhookVerifier: ({ rawBody }) => JSON.parse(rawBody),
+    });
+
+    const entitlementResponse = await handler({
+      method: 'GET',
+      path: routes.BILLING_API_PATHS.ENTITLEMENTS,
+      headers: { 'x-opportunity-os-user-id': 'dev-user' },
+      session: null,
+    });
+    assert.strictEqual(entitlementResponse.status, 401);
+
+    const checkoutResponse = await handler({
+      method: 'POST',
+      path: routes.BILLING_API_PATHS.CHECKOUT_SESSION,
+      headers: { 'x-opportunity-os-user-id': 'dev-user' },
+      session: null,
+    });
+    assert.strictEqual(checkoutResponse.status, 401);
+  })()
+);
+
+pendingAsyncTests.push(
+  (async function testBillingWebhookRejectsMalformedSignature() {
+    const billing = loadBillingRuntimeModule();
+    const routes = loadBillingApiRoutesModule(billing);
+    const store = billing.createInMemoryBillingStore();
+
+    const handler = routes.createBillingApiRequestHandler({
+      store,
+      operationMode: 'development',
+      webhookVerifier: ({ rawBody, signatureHeader }) => {
+        if (signatureHeader !== 'sig_valid') {
+          throw new Error('Invalid webhook signature.');
+        }
+        return JSON.parse(rawBody);
+      },
+      getAuthenticatedUserId: () => '',
+      baseUrl: 'https://app.example.test',
+    });
+
+    const response = await handler({
+      method: 'POST',
+      path: routes.BILLING_API_PATHS.STRIPE_WEBHOOK,
+      headers: { 'stripe-signature': 'sig_invalid' },
+      body: JSON.stringify({ id: 'evt_invalid_sig', type: 'checkout.session.completed', data: { object: {} } }),
+    });
+    assert.strictEqual(response.status, 400);
+    assert.strictEqual(response.body.error, 'Invalid webhook signature.');
+  })()
+);
+
+pendingAsyncTests.push(
+  (async function testBillingRoutesFailClosedWithoutPersistentStoreInRealMode() {
+    const billing = loadBillingRuntimeModule();
+    const routes = loadBillingApiRoutesModule(billing);
+    const store = billing.createInMemoryBillingStore();
+
+    const handler = routes.createBillingApiRequestHandler({
+      store,
+      operationMode: 'production',
+      getAuthenticatedUserId: () => 'dev-user',
+      baseUrl: 'https://app.example.test',
+      webhookVerifier: ({ rawBody }) => JSON.parse(rawBody),
+    });
+
+    const entitlementResponse = await handler({
+      method: 'GET',
+      path: routes.BILLING_API_PATHS.ENTITLEMENTS,
+      session: { userId: 'dev-user' },
+    });
+    assert.strictEqual(entitlementResponse.status, 503);
+    assert.strictEqual(entitlementResponse.body.error, 'Persistent billing store is required in this operation mode.');
   })()
 );
 

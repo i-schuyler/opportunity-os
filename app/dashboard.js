@@ -89,7 +89,6 @@ async function resolveServerSubscriptionState(session, win = window) {
       method: 'GET',
       headers: {
         Accept: 'application/json',
-        'X-Opportunity-Os-User-Id': String(session.userId),
       },
     });
 
@@ -140,7 +139,6 @@ async function createMonthlyCheckoutRedirect(session, win = window) {
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
-        'X-Opportunity-Os-User-Id': String(session.userId),
       },
       body: JSON.stringify({}),
     });
