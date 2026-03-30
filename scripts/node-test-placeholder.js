@@ -367,7 +367,7 @@ pendingAsyncTests.push(
 
     const handler = routes.createBillingApiRequestHandler({
       store,
-      operationMode: 'production',
+      runtimeEnv: { process: { env: { NODE_ENV: 'production' } } },
       getAuthenticatedUserId: () => 'dev-user',
       baseUrl: 'https://app.example.test',
       webhookVerifier: ({ rawBody }) => JSON.parse(rawBody),
@@ -380,6 +380,159 @@ pendingAsyncTests.push(
     });
     assert.strictEqual(entitlementResponse.status, 503);
     assert.strictEqual(entitlementResponse.body.error, 'Persistent billing store is required in this operation mode.');
+  })()
+);
+
+pendingAsyncTests.push(
+  (async function testEnvPersistentStoreCorruptionFailsClosedClearly() {
+  const billing = loadBillingRuntimeModule();
+  const routes = loadBillingApiRoutesModule(billing);
+
+  const runtimeEnv = {
+    process: {
+      env: {
+        BILLING_STORE_FILE: '/tmp/billing-state.json',
+        NODE_ENV: 'production',
+      },
+    },
+    __opportunityBillingFs: {
+      existsSync() {
+        return true;
+      },
+      readFileSync() {
+        return '{bad-json';
+      },
+      writeFileSync() {},
+      renameSync() {},
+    },
+  };
+
+  const persistentStore = routes.createEnvPersistentBillingStore(runtimeEnv);
+  assert.strictEqual(persistentStore.isPersistent, true);
+  assert.strictEqual(persistentStore.isHealthy, false);
+  assert.ok(
+    persistentStore.initializationError.includes('corrupted or truncated'),
+    'expected clear corruption message from persistent store initialization'
+  );
+
+  const handler = routes.createBillingApiRequestHandler({
+    store: persistentStore,
+    runtimeEnv,
+    getAuthenticatedUserId: () => 'dev-user',
+    baseUrl: 'https://app.example.test',
+    webhookVerifier: ({ rawBody }) => JSON.parse(rawBody),
+  });
+
+  const response = await handler({ method: 'GET', path: routes.BILLING_API_PATHS.ENTITLEMENTS, session: { userId: 'dev-user' } });
+  assert.strictEqual(response.status, 503);
+  assert.ok(
+    response.body.error.includes('corrupted or truncated'),
+    'expected route handler to fail closed with corruption-aware store error'
+  );
+  })()
+);
+
+(function testEnvPersistentStoreWritesUseTempThenRename() {
+  const billing = loadBillingRuntimeModule();
+  const routes = loadBillingApiRoutesModule(billing);
+
+  const writes = [];
+  const files = {};
+  const runtimeEnv = {
+    process: {
+      env: {
+        BILLING_STORE_FILE: '/tmp/billing-state.json',
+      },
+    },
+    __opportunityBillingFs: {
+      existsSync(pathname) {
+        return Object.prototype.hasOwnProperty.call(files, pathname);
+      },
+      readFileSync(pathname) {
+        return files[pathname] || '';
+      },
+      writeFileSync(pathname, content) {
+        writes.push({ type: 'write', pathname });
+        files[pathname] = String(content || '');
+      },
+      renameSync(sourcePath, destinationPath) {
+        writes.push({ type: 'rename', sourcePath, destinationPath });
+        files[destinationPath] = files[sourcePath];
+        delete files[sourcePath];
+      },
+    },
+  };
+
+  const persistentStore = routes.createEnvPersistentBillingStore(runtimeEnv);
+  persistentStore.setEntitlement('dev-user', 'paid_subscription_active', 'test');
+
+  assert.strictEqual(writes[0].type, 'write');
+  assert.strictEqual(writes[0].pathname, '/tmp/billing-state.json.tmp');
+  assert.strictEqual(writes[1].type, 'rename');
+  assert.strictEqual(writes[1].sourcePath, '/tmp/billing-state.json.tmp');
+  assert.strictEqual(writes[1].destinationPath, '/tmp/billing-state.json');
+  assert.ok(files['/tmp/billing-state.json'], 'expected final billing state file write via rename');
+})();
+
+pendingAsyncTests.push(
+  (async function testBillingRouteFactoryWiringUsesTrustedSessionIdentityAndPersistentDependencies() {
+    const billing = loadBillingRuntimeModule();
+    const routes = loadBillingApiRoutesModule(billing);
+
+    const files = {};
+    const runtimeEnv = {
+      process: {
+        env: {
+          BILLING_STORE_FILE: '/tmp/billing-state.json',
+          NODE_ENV: 'production',
+        },
+      },
+      __opportunityBillingFs: {
+        existsSync(pathname) {
+          return Object.prototype.hasOwnProperty.call(files, pathname);
+        },
+        readFileSync(pathname) {
+          return files[pathname] || '';
+        },
+        writeFileSync(pathname, content) {
+          files[pathname] = String(content || '');
+        },
+        renameSync(sourcePath, destinationPath) {
+          files[destinationPath] = files[sourcePath];
+          delete files[sourcePath];
+        },
+      },
+    };
+
+    const persistentStore = routes.createEnvPersistentBillingStore(runtimeEnv);
+    const handler = routes.createBillingApiRequestHandler({
+      store: persistentStore,
+      runtimeEnv,
+      getAuthenticatedUserId: (request) => (request && request.session && request.session.userId) || '',
+      baseUrl: 'https://app.example.test',
+      webhookVerifier: ({ rawBody }) => JSON.parse(rawBody),
+      stripeAdapter: {
+        async createMonthlyCheckoutSession({ userId }) {
+          assert.strictEqual(userId, 'trusted-user', 'expected trusted session identity, not client header');
+          return {
+            sessionId: 'cs_route_wiring',
+            checkoutUrl: 'https://checkout.stripe.test/session/cs_route_wiring',
+            subscriptionId: 'sub_route_wiring',
+          };
+        },
+      },
+    });
+
+    const response = await handler({
+      method: 'POST',
+      path: routes.BILLING_API_PATHS.CHECKOUT_SESSION,
+      headers: { 'x-opportunity-os-user-id': 'attacker-user' },
+      session: { userId: 'trusted-user' },
+      body: '{}',
+    });
+
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.checkoutUrl, 'https://checkout.stripe.test/session/cs_route_wiring');
   })()
 );
 
