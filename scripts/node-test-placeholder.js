@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
 const vm = require('vm');
+const crypto = require('crypto');
 const pendingAsyncTests = [];
 
 const appDir = path.join(__dirname, '..', 'app');
@@ -159,6 +160,61 @@ function loadBillingApiRoutesModule(runtimeModule) {
   vm.createContext(context);
   new vm.Script(source, { filename: filePath }).runInContext(context);
   return context.module.exports;
+}
+
+function loadServerBillingAdapterModule(routesModule, runtimeModule) {
+  const filePath = path.join(__dirname, '..', 'lib', 'server-billing-adapter.js');
+  let source = fs.readFileSync(filePath, 'utf8');
+
+  source = source.replace(/^import[\s\S]*?;\n/gm, '');
+  source = source.replace(/export function\s+/g, 'function ');
+  source = source.replace(/export const\s+/g, 'const ');
+  source +=
+    '\nmodule.exports = { createSignedSessionCookieValue, createSessionUserResolver, createStripeWebhookVerifierFromEnv, createBillingRouteHandlerFromRuntime, createNodeBillingRequestListener };\n';
+
+  const context = {
+    ...routesModule,
+    ...runtimeModule,
+    module: { exports: {} },
+    exports: {},
+    Buffer,
+    URL,
+    Date,
+    JSON,
+  };
+
+  vm.createContext(context);
+  new vm.Script(source, { filename: filePath }).runInContext(context);
+  return context.module.exports;
+}
+
+function invokeNodeBillingListener(listener, { method = 'GET', requestPath = '/', headers = {}, body = '' } = {}) {
+  return new Promise((resolve, reject) => {
+    const response = {
+      statusCode: 0,
+      headers: {},
+      body: '',
+      setHeader(name, value) {
+        this.headers[String(name || '').toLowerCase()] = String(value || '');
+      },
+      end(payload = '') {
+        this.body = String(payload || '');
+        resolve(this);
+      },
+    };
+
+    Promise.resolve(
+      listener(
+        {
+          method,
+          url: requestPath,
+          headers,
+          rawBody: body,
+        },
+        response
+      )
+    ).catch(reject);
+  });
 }
 
 (function testBillingEntitlementReadFailsClosedWhenUnknown() {
@@ -605,6 +661,189 @@ pendingAsyncTests.push(
 
     assert.strictEqual(response.status, 200);
     assert.strictEqual(response.body.checkoutUrl, 'https://checkout.stripe.test/session/cs_route_wiring');
+  })()
+);
+
+pendingAsyncTests.push(
+  (async function testNodeBillingAdapterRoutesReachableWithTrustedSessionCookie() {
+    const billing = loadBillingRuntimeModule();
+    const routes = loadBillingApiRoutesModule(billing);
+    const adapter = loadServerBillingAdapterModule(routes, billing);
+    const runtimeEnv = {
+      process: {
+        env: {
+          OPPORTUNITY_OS_BILLING_MODE: 'development',
+          BILLING_SESSION_SECRET: 'session-secret',
+          APP_BASE_URL: 'https://app.example.test',
+        },
+      },
+      __opportunityCrypto: crypto,
+    };
+
+    const listener = adapter.createNodeBillingRequestListener({
+      runtimeEnv,
+      stripeAdapter: {
+        async createMonthlyCheckoutSession({ userId }) {
+          assert.strictEqual(userId, 'trusted-user');
+          return {
+            sessionId: 'cs_adapter_123',
+            checkoutUrl: 'https://checkout.stripe.test/session/cs_adapter_123',
+            subscriptionId: 'sub_adapter_123',
+          };
+        },
+      },
+    });
+
+    const signedCookie = adapter.createSignedSessionCookieValue({
+      userId: 'trusted-user',
+      sessionSecret: 'session-secret',
+      cryptoImpl: crypto,
+    });
+
+    const entitlementResponse = await invokeNodeBillingListener(listener, {
+      method: 'GET',
+      requestPath: '/api/entitlements',
+      headers: { cookie: signedCookie },
+    });
+    assert.strictEqual(entitlementResponse.statusCode, 200);
+    assert.strictEqual(JSON.parse(entitlementResponse.body).entitlementState, 'free');
+
+    const checkoutResponse = await invokeNodeBillingListener(listener, {
+      method: 'POST',
+      requestPath: '/api/billing/checkout-session',
+      headers: { cookie: signedCookie },
+      body: '{}',
+    });
+    assert.strictEqual(checkoutResponse.statusCode, 200);
+    assert.strictEqual(
+      JSON.parse(checkoutResponse.body).checkoutUrl,
+      'https://checkout.stripe.test/session/cs_adapter_123'
+    );
+  })()
+);
+
+pendingAsyncTests.push(
+  (async function testNodeBillingAdapterWebhookUsesConfiguredVerifierPath() {
+    const billing = loadBillingRuntimeModule();
+    const routes = loadBillingApiRoutesModule(billing);
+    const adapter = loadServerBillingAdapterModule(routes, billing);
+    const runtimeEnv = {
+      process: {
+        env: {
+          OPPORTUNITY_OS_BILLING_MODE: 'development',
+          STRIPE_WEBHOOK_SECRET: 'whsec_test_123',
+          STRIPE_WEBHOOK_TOLERANCE_SECONDS: '300',
+        },
+      },
+      __opportunityCrypto: crypto,
+    };
+
+    const listener = adapter.createNodeBillingRequestListener({ runtimeEnv });
+
+    const eventPayload = {
+      id: 'evt_adapter_1',
+      type: 'checkout.session.completed',
+      data: {
+        object: {
+          client_reference_id: 'trusted-user',
+          subscription: 'sub_adapter_123',
+        },
+      },
+    };
+    const rawBody = JSON.stringify(eventPayload);
+    const timestamp = Math.floor(Date.now() / 1000);
+    const signature = crypto
+      .createHmac('sha256', 'whsec_test_123')
+      .update(`${timestamp}.${rawBody}`)
+      .digest('hex');
+
+    const webhookResponse = await invokeNodeBillingListener(listener, {
+      method: 'POST',
+      requestPath: '/api/billing/webhook/stripe',
+      headers: { 'stripe-signature': `t=${timestamp},v1=${signature}` },
+      body: rawBody,
+    });
+
+    assert.strictEqual(webhookResponse.statusCode, 200);
+    assert.strictEqual(JSON.parse(webhookResponse.body).applied, true);
+  })()
+);
+
+pendingAsyncTests.push(
+  (async function testNodeBillingAdapterMissingAuthAndConfigFailClosed() {
+    const billing = loadBillingRuntimeModule();
+    const routes = loadBillingApiRoutesModule(billing);
+    const adapter = loadServerBillingAdapterModule(routes, billing);
+    const runtimeEnv = {
+      process: {
+        env: {
+          OPPORTUNITY_OS_BILLING_MODE: 'development',
+          BILLING_SESSION_SECRET: 'session-secret',
+          APP_BASE_URL: 'https://app.example.test',
+        },
+      },
+      __opportunityCrypto: crypto,
+    };
+
+    const listener = adapter.createNodeBillingRequestListener({ runtimeEnv });
+
+    const entitlementResponse = await invokeNodeBillingListener(listener, {
+      method: 'GET',
+      requestPath: '/api/entitlements',
+    });
+    assert.strictEqual(entitlementResponse.statusCode, 401);
+
+    const checkoutResponse = await invokeNodeBillingListener(listener, {
+      method: 'POST',
+      requestPath: '/api/billing/checkout-session',
+      body: '{}',
+    });
+    assert.strictEqual(checkoutResponse.statusCode, 401);
+
+    const webhookResponse = await invokeNodeBillingListener(listener, {
+      method: 'POST',
+      requestPath: '/api/billing/webhook/stripe',
+      headers: { 'stripe-signature': 't=1,v1=invalid' },
+      body: JSON.stringify({ id: 'evt_missing_config', type: 'checkout.session.completed', data: { object: {} } }),
+    });
+    assert.strictEqual(webhookResponse.statusCode, 503);
+    assert.strictEqual(JSON.parse(webhookResponse.body).error, 'Webhook verification is not configured.');
+  })()
+);
+
+pendingAsyncTests.push(
+  (async function testNodeBillingAdapterProductionModeRequiresPersistentStore() {
+    const billing = loadBillingRuntimeModule();
+    const routes = loadBillingApiRoutesModule(billing);
+    const adapter = loadServerBillingAdapterModule(routes, billing);
+    const runtimeEnv = {
+      process: {
+        env: {
+          NODE_ENV: 'production',
+          BILLING_SESSION_SECRET: 'session-secret',
+          APP_BASE_URL: 'https://app.example.test',
+        },
+      },
+      __opportunityCrypto: crypto,
+    };
+
+    const listener = adapter.createNodeBillingRequestListener({ runtimeEnv });
+    const signedCookie = adapter.createSignedSessionCookieValue({
+      userId: 'trusted-user',
+      sessionSecret: 'session-secret',
+      cryptoImpl: crypto,
+    });
+
+    const entitlementResponse = await invokeNodeBillingListener(listener, {
+      method: 'GET',
+      requestPath: '/api/entitlements',
+      headers: { cookie: signedCookie },
+    });
+    assert.strictEqual(entitlementResponse.statusCode, 503);
+    assert.strictEqual(
+      JSON.parse(entitlementResponse.body).error,
+      'Persistent billing store is required in this operation mode.'
+    );
   })()
 );
 

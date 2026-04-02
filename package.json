@@ -6,6 +6,7 @@
   "scripts": {
     "lint": "node scripts/node-lint-placeholder.js",
     "test": "node scripts/node-test-placeholder.js",
-    "build": "node scripts/node-build-placeholder.js"
+    "build": "node scripts/node-build-placeholder.js",
+    "start": "node server/index.mjs"
   }
 }
