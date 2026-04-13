@@ -47,6 +47,8 @@ Notes:
 - Session cookie name is `opportunity_os_session` with value `<base64url({"userId":"..."})>.<hmac_sha256_hex(payload, BILLING_SESSION_SECRET)>`.
 - Missing auth or required billing/webhook config fails closed.
 - Founder lifetime automation remains deferred; monthly subscription is the only real checkout path in this slice.
+- Static serving from `server/index.mjs` is intentionally narrowed to app assets (`/`, `/app/*`, root-level app files like `/auth.html`) plus browser-required client helpers (`/lib/auth-scaffold.js`, `/lib/opportunity-model.js`).
+- Internal server/billing source files under `/lib/*` are not publicly served.
 
 Run locally with `npm start`.
 

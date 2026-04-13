@@ -10,6 +10,11 @@ import { createNodeBillingRequestListener } from '../lib/server-billing-adapter.
 const currentFilePath = fileURLToPath(import.meta.url);
 const rootDir = path.resolve(path.dirname(currentFilePath), '..');
 const appDir = path.join(rootDir, 'app');
+const PUBLIC_CLIENT_LIB_FILES = new Map([
+  ['/lib/auth-scaffold.js', path.join(rootDir, 'lib', 'auth-scaffold.js')],
+  ['/lib/opportunity-model.js', path.join(rootDir, 'lib', 'opportunity-model.js')],
+]);
+const PUBLIC_CLIENT_LIB_FILE_SET = new Set(PUBLIC_CLIENT_LIB_FILES.values());
 
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -20,16 +25,28 @@ const MIME_TYPES = {
 
 function resolveStaticPath(requestPath = '/') {
   const pathname = String(requestPath || '/').trim();
+
+  const publicClientLibPath = PUBLIC_CLIENT_LIB_FILES.get(pathname);
+  if (publicClientLibPath) {
+    return publicClientLibPath;
+  }
+
   if (pathname === '/') {
     return path.join(appDir, 'index.html');
   }
 
-  if (pathname.startsWith('/app/')) {
-    return path.join(rootDir, pathname);
+  if (pathname === '/app' || pathname === '/app/') {
+    return path.join(appDir, 'index.html');
   }
 
-  if (pathname.startsWith('/lib/')) {
-    return path.join(rootDir, pathname);
+  if (pathname.startsWith('/app/')) {
+    const candidatePath = path.resolve(appDir, `.${pathname.slice('/app'.length)}`);
+    return isInsideDirectory(candidatePath, appDir) ? candidatePath : '';
+  }
+
+  if (pathname.startsWith('/')) {
+    const candidatePath = path.resolve(appDir, `.${pathname}`);
+    return isInsideDirectory(candidatePath, appDir) ? candidatePath : '';
   }
 
   return '';
@@ -40,15 +57,19 @@ function resolveMimeType(filePath = '') {
   return MIME_TYPES[extension] || 'application/octet-stream';
 }
 
-function isInsideRoot(candidatePath = '') {
-  const normalizedRoot = `${rootDir}${path.sep}`;
+function isInsideDirectory(candidatePath = '', directoryPath = '') {
+  const normalizedRoot = `${path.resolve(directoryPath)}${path.sep}`;
   const normalizedCandidate = path.resolve(candidatePath);
-  return normalizedCandidate === rootDir || normalizedCandidate.startsWith(normalizedRoot);
+  return normalizedCandidate === path.resolve(directoryPath) || normalizedCandidate.startsWith(normalizedRoot);
 }
 
 async function serveStaticFile(requestPath, response) {
   const filePath = resolveStaticPath(requestPath);
-  if (!filePath || !isInsideRoot(filePath)) {
+  const isPublicClientLib = PUBLIC_CLIENT_LIB_FILE_SET.has(filePath);
+  const isAllowedAppFile = isInsideDirectory(filePath, appDir);
+  const isAllowedPath = isPublicClientLib || isAllowedAppFile;
+
+  if (!filePath || !isAllowedPath) {
     return false;
   }
 
