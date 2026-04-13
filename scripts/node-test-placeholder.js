@@ -4,6 +4,8 @@ const path = require('path');
 const assert = require('assert');
 const vm = require('vm');
 const crypto = require('crypto');
+const http = require('http');
+const { spawn } = require('child_process');
 const pendingAsyncTests = [];
 
 const appDir = path.join(__dirname, '..', 'app');
@@ -214,6 +216,118 @@ function invokeNodeBillingListener(listener, { method = 'GET', requestPath = '/'
         response
       )
     ).catch(reject);
+  });
+}
+
+function waitForServerReady(serverProcess, timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let combinedOutput = '';
+
+    const timeoutId = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      reject(new Error(`server start timeout: ${combinedOutput}`));
+    }, timeoutMs);
+
+    const handleOutput = (chunk) => {
+      const message = String(chunk || '');
+      combinedOutput += message;
+      if (!settled && message.includes('Opportunity OS server listening on')) {
+        settled = true;
+        clearTimeout(timeoutId);
+        resolve();
+      }
+    };
+
+    if (serverProcess.stdout) {
+      serverProcess.stdout.on('data', handleOutput);
+    }
+    if (serverProcess.stderr) {
+      serverProcess.stderr.on('data', handleOutput);
+    }
+
+    serverProcess.on('error', (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeoutId);
+      reject(error);
+    });
+
+    serverProcess.on('exit', (code) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeoutId);
+      reject(new Error(`server exited early with code ${code}: ${combinedOutput}`));
+    });
+  });
+}
+
+function stopServer(serverProcess) {
+  return new Promise((resolve) => {
+    if (!serverProcess || serverProcess.killed || serverProcess.exitCode !== null) {
+      resolve();
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      try {
+        serverProcess.kill('SIGKILL');
+      } catch {}
+    }, 2000);
+
+    serverProcess.once('exit', () => {
+      clearTimeout(timeoutId);
+      resolve();
+    });
+
+    try {
+      serverProcess.kill('SIGTERM');
+    } catch {
+      clearTimeout(timeoutId);
+      resolve();
+    }
+  });
+}
+
+function requestServer({ port, method = 'GET', requestPath = '/', headers = {}, body = '' } = {}) {
+  return new Promise((resolve, reject) => {
+    const request = http.request(
+      {
+        hostname: '127.0.0.1',
+        port,
+        method,
+        path: requestPath,
+        headers,
+      },
+      (response) => {
+        const chunks = [];
+        response.on('data', (chunk) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk || '')));
+        });
+        response.on('end', () => {
+          resolve({
+            statusCode: response.statusCode,
+            body: Buffer.concat(chunks).toString('utf8'),
+            headers: response.headers,
+          });
+        });
+      }
+    );
+
+    request.on('error', reject);
+
+    if (body) {
+      request.write(body);
+    }
+
+    request.end();
   });
 }
 
@@ -3356,6 +3470,73 @@ pendingAsyncTests.push(
   assert.strictEqual(nodes.upgradeCtaButton.disabled, true);
   assert.ok(nodes.subscriptionSummary.textContent.includes('Paid plan active'));
 })();
+
+pendingAsyncTests.push(
+  (async function testServerStaticSurfaceDoesNotExposeInternalBillingSource() {
+    const serverPath = path.join(__dirname, '..', 'server', 'index.mjs');
+    const billingStorePath = path.join(__dirname, '..', '.tmp-billing-store-static-surface.json');
+    const port = 39000 + Math.floor(Math.random() * 1000);
+
+    try {
+      fs.unlinkSync(billingStorePath);
+    } catch {}
+
+    const serverProcess = spawn(process.execPath, [serverPath], {
+      env: {
+        ...process.env,
+        PORT: String(port),
+        BILLING_STORE_FILE: billingStorePath,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    await waitForServerReady(serverProcess);
+
+    try {
+      const rootResponse = await requestServer({ port, requestPath: '/' });
+      assert.strictEqual(rootResponse.statusCode, 200);
+
+      const entitlementsResponse = await requestServer({ port, requestPath: '/api/entitlements' });
+      assert.strictEqual(entitlementsResponse.statusCode, 401);
+
+      const checkoutResponse = await requestServer({
+        port,
+        method: 'POST',
+        requestPath: '/api/billing/checkout-session',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: '{}',
+      });
+      assert.strictEqual(checkoutResponse.statusCode, 401);
+
+      const webhookResponse = await requestServer({
+        port,
+        method: 'POST',
+        requestPath: '/api/billing/webhook/stripe',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: '{}',
+      });
+      assert.strictEqual(webhookResponse.statusCode, 503);
+
+      const missingResponse = await requestServer({ port, requestPath: '/does-not-exist' });
+      assert.strictEqual(missingResponse.statusCode, 404);
+
+      const blockedLibResponse = await requestServer({ port, requestPath: '/lib/billing-api-routes.js' });
+      assert.strictEqual(blockedLibResponse.statusCode, 404);
+
+      const allowedClientLibResponse = await requestServer({ port, requestPath: '/lib/auth-scaffold.js' });
+      assert.strictEqual(allowedClientLibResponse.statusCode, 200);
+    } finally {
+      await stopServer(serverProcess);
+      try {
+        fs.unlinkSync(billingStorePath);
+      } catch {}
+    }
+  })()
+);
 
 pendingAsyncTests.push(
   (async function testDashboardServerUnknownEntitlementFailsClosedToFree() {
