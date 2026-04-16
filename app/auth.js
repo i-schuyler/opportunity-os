@@ -3,6 +3,7 @@ import { getMockSession, isMockAuthEnabled, signInWithEmail } from '../lib/auth-
 const form = document.getElementById('auth-form');
 const messageNode = document.getElementById('auth-message');
 const submitButton = form ? form.querySelector('button[type="submit"]') : null;
+const accessCodeInput = document.getElementById('access-code');
 
 function withCurrentSearch(path) {
   return `${path}${window.location.search || ''}`;
@@ -20,40 +21,162 @@ function showMockModeBanner() {
   document.body.prepend(banner);
 }
 
+function setMessage(value) {
+  if (!messageNode) {
+    return;
+  }
+
+  messageNode.textContent = String(value || '').trim();
+}
+
+async function resolveRealSession() {
+  if (!window || typeof window.fetch !== 'function') {
+    return null;
+  }
+
+  try {
+    const response = await window.fetch('/api/auth/session', {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const payload = await response.json().catch(() => ({}));
+    const userId = String((payload && payload.userId) || '').trim();
+    if (!userId) {
+      return null;
+    }
+
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+async function createRealSession({ email, accessCode } = {}) {
+  if (!window || typeof window.fetch !== 'function') {
+    return {
+      ok: false,
+      error: 'Secure sign-in is unavailable in this environment.',
+    };
+  }
+
+  try {
+    const response = await window.fetch('/api/auth/session', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        email: String(email || ''),
+        accessCode: String(accessCode || ''),
+      }),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return {
+        ok: false,
+        error: String((payload && payload.error) || 'Unable to sign in right now.'),
+      };
+    }
+
+    const userId = String((payload && payload.userId) || '').trim();
+    if (!userId) {
+      return {
+        ok: false,
+        error: 'Unable to sign in right now.',
+      };
+    }
+
+    return {
+      ok: true,
+    };
+  } catch {
+    return {
+      ok: false,
+      error: 'Unable to sign in right now.',
+    };
+  }
+}
+
 applyMockAuthFlagFromQuery();
 const mockEnabled = isMockAuthEnabled();
 if (mockEnabled) {
   showMockModeBanner();
+  if (accessCodeInput) {
+    accessCodeInput.value = '';
+    accessCodeInput.required = false;
+    accessCodeInput.disabled = true;
+  }
+} else {
+  if (accessCodeInput) {
+    accessCodeInput.required = true;
+    accessCodeInput.disabled = false;
+  }
+  setMessage('Enter your email and access code to start a secure session.');
 }
 
-const existingSession = getMockSession();
-if (existingSession) {
+const existingMockSession = mockEnabled ? getMockSession() : null;
+if (existingMockSession) {
   window.location.replace(withCurrentSearch('./dashboard.html'));
+}
+
+if (!mockEnabled) {
+  Promise.resolve(resolveRealSession()).then((session) => {
+    if (!session) {
+      return;
+    }
+
+    window.location.replace(withCurrentSearch('./dashboard.html'));
+  });
 }
 
 if (form) {
   if (!mockEnabled) {
-    if (messageNode) {
-      messageNode.textContent = 'Mock auth is disabled. Add ?mockAuth=1 to enable the dev scaffold.';
-    }
+    setMessage('Enter your email and access code to start a secure session.');
+  }
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+
     if (submitButton) {
       submitButton.disabled = true;
     }
-  }
 
-  form.addEventListener('submit', (event) => {
-    event.preventDefault();
+    if (mockEnabled) {
+      const formData = new FormData(form);
+      const email = String(formData.get('email') || '');
+      const session = signInWithEmail(email);
 
-    if (!mockEnabled) {
+      if (!session) {
+        setMessage('Enter a valid email to continue.');
+        if (submitButton) {
+          submitButton.disabled = false;
+        }
+        return;
+      }
+
+      window.location.assign(withCurrentSearch('./dashboard.html'));
       return;
     }
 
     const formData = new FormData(form);
     const email = String(formData.get('email') || '');
-    const session = signInWithEmail(email);
+    const accessCode = String(formData.get('accessCode') || '');
+    const result = await createRealSession({ email, accessCode });
 
-    if (!session && messageNode) {
-      messageNode.textContent = 'Enter a valid email to continue.';
+    if (!result.ok) {
+      setMessage(result.error);
+      if (submitButton) {
+        submitButton.disabled = false;
+      }
       return;
     }
 

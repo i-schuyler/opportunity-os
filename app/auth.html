@@ -13,12 +13,20 @@
         <p class="eyebrow">Auth Scaffold</p>
         <h1>Sign in to Opportunity OS</h1>
         <p>
-          This is a dev-safe placeholder sign-in path. It stores a temporary session in browser storage so future
-          slices can replace it with real authentication.
+          Use the default sign-in flow to request a secure server-issued session cookie. For local preview-only mock
+          mode, add <code>?mockAuth=1</code> to this URL.
         </p>
         <form id="auth-form" class="stack-sm">
           <label for="email">Email</label>
           <input id="email" name="email" type="email" required autocomplete="email" placeholder="you@example.com" />
+          <label for="access-code">Access code</label>
+          <input
+            id="access-code"
+            name="accessCode"
+            type="password"
+            autocomplete="one-time-code"
+            placeholder="Operator-issued access code"
+          />
           <button class="button button--solid" type="submit">Continue to dashboard</button>
         </form>
         <p class="meta" id="auth-message" role="status" aria-live="polite"></p>
