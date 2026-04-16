@@ -77,6 +77,7 @@ function loadDashboardModule(mocks) {
   let source = fs.readFileSync(filePath, 'utf8');
 
   source = source.replace(/^import[\s\S]*?;\n/gm, '');
+  source = source.replace(/export async function\s+/g, 'async function ');
   source = source.replace(/export function\s+/g, 'function ');
   source = source.replace(
     /\nif \(typeof window !== 'undefined' && typeof document !== 'undefined'\) \{\n  initializeDashboard\(window, document\);\n\}\n?$/,
@@ -329,6 +330,29 @@ function requestServer({ port, method = 'GET', requestPath = '/', headers = {}, 
 
     request.end();
   });
+}
+
+function extractCookieFromSetCookieHeaders(headers = {}, cookieName = '') {
+  const normalizedCookieName = String(cookieName || '').trim();
+  if (!normalizedCookieName) {
+    return '';
+  }
+
+  const setCookieHeader = headers['set-cookie'];
+  const entries = Array.isArray(setCookieHeader)
+    ? setCookieHeader
+    : setCookieHeader
+      ? [setCookieHeader]
+      : [];
+
+  const matchedEntry = entries.find((entry) =>
+    String(entry || '').trim().toLowerCase().startsWith(`${normalizedCookieName.toLowerCase()}=`)
+  );
+  if (!matchedEntry) {
+    return '';
+  }
+
+  return String(matchedEntry).split(';')[0] || '';
 }
 
 (function testBillingEntitlementReadFailsClosedWhenUnknown() {
@@ -3470,6 +3494,180 @@ pendingAsyncTests.push(
   assert.strictEqual(nodes.upgradeCtaButton.disabled, true);
   assert.ok(nodes.subscriptionSummary.textContent.includes('Paid plan active'));
 })();
+
+pendingAsyncTests.push(
+  (async function testServerRealAuthSessionIssuanceAndTrustedEntitlementRead() {
+    const serverPath = path.join(__dirname, '..', 'server', 'index.mjs');
+    const billingStorePath = path.join(__dirname, '..', '.tmp-billing-store-real-auth.json');
+    const port = 38000 + Math.floor(Math.random() * 1000);
+
+    try {
+      fs.unlinkSync(billingStorePath);
+    } catch {}
+
+    const serverProcess = spawn(process.execPath, [serverPath], {
+      env: {
+        ...process.env,
+        PORT: String(port),
+        BILLING_STORE_FILE: billingStorePath,
+        BILLING_SESSION_SECRET: 'session-secret',
+        OPPORTUNITY_OS_AUTH_ACCESS_CODE: 'operator-access-code',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    await waitForServerReady(serverProcess);
+
+    try {
+      const unauthenticatedSessionResponse = await requestServer({
+        port,
+        method: 'GET',
+        requestPath: '/api/auth/session',
+      });
+      assert.strictEqual(unauthenticatedSessionResponse.statusCode, 401);
+
+      const invalidSignInResponse = await requestServer({
+        port,
+        method: 'POST',
+        requestPath: '/api/auth/session',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ email: 'person@example.com', accessCode: 'wrong-code' }),
+      });
+      assert.strictEqual(invalidSignInResponse.statusCode, 401);
+
+      const signInResponse = await requestServer({
+        port,
+        method: 'POST',
+        requestPath: '/api/auth/session',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ email: 'person@example.com', accessCode: 'operator-access-code' }),
+      });
+      assert.strictEqual(signInResponse.statusCode, 200);
+
+      const signedSessionCookie = extractCookieFromSetCookieHeaders(signInResponse.headers, 'opportunity_os_session');
+      assert.ok(signedSessionCookie, 'expected signed session cookie to be issued');
+
+      const signedSessionReadResponse = await requestServer({
+        port,
+        method: 'GET',
+        requestPath: '/api/auth/session',
+        headers: {
+          cookie: signedSessionCookie,
+        },
+      });
+      assert.strictEqual(signedSessionReadResponse.statusCode, 200);
+
+      const signedSessionBody = JSON.parse(signedSessionReadResponse.body);
+      assert.strictEqual(typeof signedSessionBody.userId, 'string');
+      assert.ok(signedSessionBody.userId.startsWith('user-'));
+
+      const entitlementResponse = await requestServer({
+        port,
+        method: 'GET',
+        requestPath: '/api/entitlements',
+        headers: {
+          cookie: signedSessionCookie,
+        },
+      });
+      assert.strictEqual(entitlementResponse.statusCode, 200);
+      assert.strictEqual(JSON.parse(entitlementResponse.body).entitlementState, 'free');
+
+      const signOutResponse = await requestServer({
+        port,
+        method: 'DELETE',
+        requestPath: '/api/auth/session',
+        headers: {
+          cookie: signedSessionCookie,
+        },
+      });
+      assert.strictEqual(signOutResponse.statusCode, 200);
+
+      const unauthenticatedEntitlementResponse = await requestServer({
+        port,
+        method: 'GET',
+        requestPath: '/api/entitlements',
+      });
+      assert.strictEqual(unauthenticatedEntitlementResponse.statusCode, 401);
+    } finally {
+      await stopServer(serverProcess);
+      try {
+        fs.unlinkSync(billingStorePath);
+      } catch {}
+    }
+  })()
+);
+
+pendingAsyncTests.push(
+  (async function testDashboardRealSessionPathStaysSeparateFromMockPreview() {
+    const model = loadOpportunityModel();
+    const storage = makeSessionStorage();
+    const userId = 'real-user';
+    model.createOpportunityForUser(userId, { title: 'First', status: 'new' }, { storage });
+
+    const { win, doc, nodes } = makeDashboardHarness();
+    win.location.search = '';
+    const fetchPaths = [];
+    let mockSessionCalls = 0;
+    win.fetch = async (requestPath) => {
+      fetchPaths.push(requestPath);
+
+      if (requestPath === '/api/auth/session') {
+        return {
+          ok: true,
+          async json() {
+            return { userId, email: 'real@example.com' };
+          },
+        };
+      }
+
+      if (requestPath === '/api/entitlements') {
+        return {
+          ok: true,
+          async json() {
+            return { entitlementState: 'free' };
+          },
+        };
+      }
+
+      throw new Error(`unexpected fetch path: ${requestPath}`);
+    };
+
+    const { initializeDashboard } = loadDashboardModule({
+      getMockSession: () => {
+        mockSessionCalls += 1;
+        return { userId: 'mock-user', email: 'mock@example.com' };
+      },
+      isMockAuthEnabled: () => false,
+      signOut: () => {
+        throw new Error('mock sign-out should not run in real-session mode');
+      },
+      listOpportunitiesForUser: (sessionUserId, options = {}) =>
+        model.listOpportunitiesForUser(sessionUserId, { ...options, storage }),
+      createOpportunityForUser: (sessionUserId, seed) =>
+        model.createOpportunityForUser(sessionUserId, seed, { storage }),
+      updateOpportunityForUser: (sessionUserId, opportunityId, updates) =>
+        model.updateOpportunityForUser(sessionUserId, opportunityId, updates, { storage }),
+      archiveOpportunityForUser: (sessionUserId, opportunityId) =>
+        model.archiveOpportunityForUser(sessionUserId, opportunityId, { storage }),
+      deleteOpportunityForUser: (sessionUserId, opportunityId) =>
+        model.deleteOpportunityForUser(sessionUserId, opportunityId, { storage }),
+      window: win,
+      document: doc,
+    });
+
+    await initializeDashboard(win, doc);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    assert.strictEqual(mockSessionCalls, 0);
+    assert.ok(fetchPaths.includes('/api/auth/session'));
+    assert.strictEqual(nodes.sessionEmail.textContent, 'Signed in as real@example.com');
+  })()
+);
 
 pendingAsyncTests.push(
   (async function testServerStaticSurfaceDoesNotExposeInternalBillingSource() {

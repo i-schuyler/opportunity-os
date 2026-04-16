@@ -200,6 +200,58 @@ function applyMockAuthFlagFromQuery(win) {
   win.OPPORTUNITY_OS_ENABLE_MOCK_AUTH = params.get('mockAuth') === '1';
 }
 
+function isMockModeEnabled(win = window) {
+  const params = new URLSearchParams((win && win.location && win.location.search) || '');
+  return params.get('mockAuth') === '1' || Boolean(win && win.OPPORTUNITY_OS_ENABLE_MOCK_AUTH === true);
+}
+
+async function resolveRealSession(win = window) {
+  if (!win || typeof win.fetch !== 'function') {
+    return null;
+  }
+
+  try {
+    const response = await win.fetch('/api/auth/session', {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const payload = await response.json().catch(() => ({}));
+    const userId = String((payload && payload.userId) || '').trim();
+    if (!userId) {
+      return null;
+    }
+
+    return {
+      userId,
+      email: String((payload && payload.email) || '').trim(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function clearRealSession(win = window) {
+  if (!win || typeof win.fetch !== 'function') {
+    return;
+  }
+
+  try {
+    await win.fetch('/api/auth/session', {
+      method: 'DELETE',
+      headers: {
+        Accept: 'application/json',
+      },
+    });
+  } catch {}
+}
+
 function addMockModeBanner(doc) {
   const banner = doc.createElement('p');
   banner.className = 'mock-banner';
@@ -1171,16 +1223,24 @@ function buildCard(item, doc, options = {}) {
   return card;
 }
 
-export function initializeDashboard(win = window, doc = document) {
+export async function initializeDashboard(win = window, doc = document) {
   applyMockAuthFlagFromQuery(win);
-  const session = getMockSession();
+  const mockModeEnabled = isMockModeEnabled(win);
+  const params = new URLSearchParams((win && win.location && win.location.search) || '');
+  let session = null;
+
+  if (mockModeEnabled) {
+    session = getMockSession();
+  } else {
+    session = await resolveRealSession(win);
+  }
 
   if (!session) {
     win.location.replace(withCurrentSearch('./auth.html', win));
     return;
   }
 
-  if (isMockAuthEnabled()) {
+  if (mockModeEnabled && isMockAuthEnabled()) {
     addMockModeBanner(doc);
   }
 
@@ -1213,16 +1273,17 @@ export function initializeDashboard(win = window, doc = document) {
   const cancelEditButton = doc.getElementById('cancel-edit-button');
   const signOutButton = doc.getElementById('sign-out-button');
   const filterState = readDashboardFilters(win);
-  const params = new URLSearchParams((win && win.location && win.location.search) || '');
-  const isMockModeEnabled =
-    params.get('mockAuth') === '1' || Boolean(win && win.OPPORTUNITY_OS_ENABLE_MOCK_AUTH === true);
-  const isMockPreviewEnabled = isMockModeEnabled && params.has('mockPlan');
+  const isMockPreviewEnabled = mockModeEnabled && params.has('mockPlan');
   let subscriptionState = isMockPreviewEnabled ? resolveLocalSubscriptionState(win) : buildFreeSubscriptionState('server-pending');
   const selectedIds = new Set();
   let visibleIds = [];
 
   if (emailNode) {
-    emailNode.textContent = `Signed in as ${session.email}`;
+    if (session.email) {
+      emailNode.textContent = `Signed in as ${session.email}`;
+    } else {
+      emailNode.textContent = 'Signed in with secure server session';
+    }
   }
 
   function setTransferFeedback(message, isError = false) {
@@ -1853,9 +1914,15 @@ export function initializeDashboard(win = window, doc = document) {
   }
 
   if (signOutButton) {
-    signOutButton.addEventListener('click', () => {
-      signOut();
-      win.location.assign(withCurrentSearch('./auth.html', win));
+    signOutButton.addEventListener('click', async () => {
+      if (mockModeEnabled) {
+        signOut();
+        win.location.assign(withCurrentSearch('./auth.html', win));
+        return;
+      }
+
+      await clearRealSession(win);
+      win.location.assign('./auth.html');
     });
   }
 }

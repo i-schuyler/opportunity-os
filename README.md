@@ -31,12 +31,16 @@ Issue -> Codex PR -> CI gates -> merge
 
 ## Billing API runtime adapter
 The repo now includes a minimal Node runtime adapter at `server/index.mjs` that exposes:
+- `GET /api/auth/session`
+- `POST /api/auth/session`
+- `DELETE /api/auth/session`
 - `GET /api/entitlements`
 - `POST /api/billing/checkout-session`
 - `POST /api/billing/webhook/stripe`
 
 Required runtime configuration for real monthly checkout testing:
 - `BILLING_SESSION_SECRET` for trusted signed-session cookie identity
+- `OPPORTUNITY_OS_AUTH_ACCESS_CODE` for minimal operator-issued sign-in access
 - `APP_BASE_URL` (or `BILLING_BASE_URL`) for checkout success/cancel return URLs
 - `STRIPE_SECRET_KEY` and `STRIPE_MONTHLY_PRICE_ID` for checkout-session creation
 - `STRIPE_WEBHOOK_SECRET` for Stripe webhook signature verification
@@ -45,6 +49,7 @@ Required runtime configuration for real monthly checkout testing:
 Notes:
 - Billing routes derive user identity from a server-verified signed cookie, not client user-id headers.
 - Session cookie name is `opportunity_os_session` with value `<base64url({"userId":"..."})>.<hmac_sha256_hex(payload, BILLING_SESSION_SECRET)>`.
+- Auth session issuance is server-side only via `/api/auth/session` and never trusts client-provided user ids.
 - Missing auth or required billing/webhook config fails closed.
 - Founder lifetime automation remains deferred; monthly subscription is the only real checkout path in this slice.
 - Static serving from `server/index.mjs` is intentionally narrowed to app assets (`/`, `/app/*`, root-level app files like `/auth.html`) plus browser-required client helpers (`/lib/auth-scaffold.js`, `/lib/opportunity-model.js`).
